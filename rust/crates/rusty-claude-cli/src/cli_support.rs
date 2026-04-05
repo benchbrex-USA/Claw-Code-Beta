@@ -240,63 +240,6 @@ pub(super) fn git_output(args: &[&str]) -> Result<String, Box<dyn std::error::Er
     Ok(String::from_utf8(output.stdout)?)
 }
 
-pub(super) fn git_status_ok(args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(env::current_dir()?)
-        .output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(format!("git {} failed: {stderr}", args.join(" ")).into());
-    }
-    Ok(())
-}
-
-pub(super) fn command_exists(name: &str) -> bool {
-    Command::new("which")
-        .arg(name)
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-}
-
-pub(super) fn write_temp_text_file(
-    filename: &str,
-    contents: &str,
-) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let path = env::temp_dir().join(filename);
-    fs::write(&path, contents)?;
-    Ok(path)
-}
-
-pub(super) fn recent_user_context(session: &Session, limit: usize) -> String {
-    let requests = session
-        .messages
-        .iter()
-        .filter(|message| message.role == MessageRole::User)
-        .filter_map(|message| {
-            message.blocks.iter().find_map(|block| match block {
-                ContentBlock::Text { text } => Some(text.trim().to_string()),
-                _ => None,
-            })
-        })
-        .rev()
-        .take(limit)
-        .collect::<Vec<_>>();
-
-    if requests.is_empty() {
-        "<no prior user messages>".to_string()
-    } else {
-        requests
-            .into_iter()
-            .rev()
-            .enumerate()
-            .map(|(index, text)| format!("{}. {}", index + 1, text))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-}
-
 pub(super) fn truncate_for_prompt(value: &str, limit: usize) -> String {
     if value.chars().count() <= limit {
         value.trim().to_string()
@@ -304,20 +247,6 @@ pub(super) fn truncate_for_prompt(value: &str, limit: usize) -> String {
         let truncated = value.chars().take(limit).collect::<String>();
         format!("{}\n…[truncated]", truncated.trim_end())
     }
-}
-
-fn sanitize_generated_message(value: &str) -> String {
-    value.trim().trim_matches('`').trim().replace("\r\n", "\n")
-}
-
-pub(super) fn parse_titled_body(value: &str) -> Option<(String, String)> {
-    let normalized = sanitize_generated_message(value);
-    let title = normalized
-        .lines()
-        .find_map(|line| line.strip_prefix("TITLE:").map(str::trim))?;
-    let body_start = normalized.find("BODY:")?;
-    let body = normalized[body_start + "BODY:".len()..].trim();
-    Some((title.to_string(), body.to_string()))
 }
 
 pub(super) fn render_version_report() -> String {

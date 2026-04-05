@@ -2289,8 +2289,12 @@ printf 'pwsh:%s' "$1"
                 |policy, (name, required_permission)| {
                     policy.with_tool_requirement(name, required_permission)
                 },
-            );
+        );
         registry.with_enforcer(PermissionEnforcer::new(policy))
+    }
+
+    fn plugin_registry_with_tool(tool: PluginTool) -> super::GlobalToolRegistry {
+        GlobalToolRegistry::with_plugin_tools(vec![tool]).expect("plugin tool registry should build")
     }
 
     #[test]
@@ -2360,6 +2364,118 @@ printf 'pwsh:%s' "$1"
             err.contains("requires workspace-write permission"),
             "should cite required mode: {err}"
         );
+    }
+
+    #[test]
+    fn plugin_tools_reject_paths_that_escape_workspace_boundary() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let workspace_root = temp_path("plugin-workspace");
+        let outside_root = temp_path("plugin-outside");
+        fs::create_dir_all(&workspace_root).expect("create workspace root");
+        fs::create_dir_all(&outside_root).expect("create outside root");
+        let original_dir = std::env::current_dir().expect("cwd");
+        std::env::set_current_dir(&workspace_root).expect("set cwd");
+
+        let registry = plugin_registry_with_tool(PluginTool::new(
+            "plugin-demo@external",
+            "plugin-demo",
+            PluginToolDefinition {
+                name: "plugin_path_write".to_string(),
+                description: Some("workspace-boundary plugin fixture".to_string()),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" }
+                    },
+                    "required": ["path"],
+                    "additionalProperties": false
+                }),
+            },
+            "echo",
+            Vec::new(),
+            PluginToolPermission::WorkspaceWrite,
+            None,
+        ));
+
+        let escaped_path = outside_root.join("escape.txt");
+        let err = registry
+            .execute(
+                "plugin_path_write",
+                &json!({ "path": escaped_path.to_string_lossy() }),
+            )
+            .expect_err("plugin tool should reject paths outside the workspace");
+
+        std::env::set_current_dir(&original_dir).expect("restore cwd");
+        let _ = fs::remove_dir_all(workspace_root);
+        let _ = fs::remove_dir_all(outside_root);
+
+        assert!(
+            err.contains("is not workspace-safe"),
+            "should explain workspace boundary failure: {err}"
+        );
+    }
+
+    #[test]
+    fn plugin_tools_execute_from_workspace_root_instead_of_plugin_root() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let workspace_root = temp_path("plugin-workspace-root");
+        let plugin_root = temp_path("plugin-root");
+        fs::create_dir_all(&workspace_root).expect("create workspace root");
+        fs::create_dir_all(plugin_root.join("tools")).expect("create plugin tools dir");
+        let script_path = plugin_root.join("tools").join("write-in-cwd.sh");
+        fs::write(
+            &script_path,
+            "#!/bin/sh\nprintf '%s' \"$CLAWD_PLUGIN_ROOT\"; printf '%s\\n' \"$PWD\" > plugin-output.txt\n",
+        )
+        .expect("write plugin script");
+        let original_dir = std::env::current_dir().expect("cwd");
+        std::env::set_current_dir(&workspace_root).expect("set cwd");
+
+        let registry = plugin_registry_with_tool(PluginTool::new(
+            "plugin-demo@external",
+            "plugin-demo",
+            PluginToolDefinition {
+                name: "plugin_touch_workspace".to_string(),
+                description: Some("workspace cwd plugin fixture".to_string()),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false
+                }),
+            },
+            "sh",
+            vec![script_path.to_string_lossy().into_owned()],
+            PluginToolPermission::WorkspaceWrite,
+            Some(plugin_root.clone()),
+        ));
+
+        let output = registry
+            .execute("plugin_touch_workspace", &json!({}))
+            .expect("plugin tool should execute from workspace root");
+
+        std::env::set_current_dir(&original_dir).expect("restore cwd");
+
+        let mediated_workspace_root = workspace_root
+            .canonicalize()
+            .unwrap_or_else(|_| workspace_root.clone());
+        let workspace_output = workspace_root.join("plugin-output.txt");
+        assert!(workspace_output.exists(), "plugin output should be written in the workspace");
+        assert_eq!(
+            fs::read_to_string(&workspace_output).expect("workspace output should read"),
+            format!("{}\n", mediated_workspace_root.display())
+        );
+        assert_eq!(output, plugin_root.display().to_string());
+        assert!(
+            !plugin_root.join("plugin-output.txt").exists(),
+            "plugin root should not receive relative writes"
+        );
+
+        let _ = fs::remove_dir_all(workspace_root);
+        let _ = fs::remove_dir_all(plugin_root);
     }
 
     #[test]

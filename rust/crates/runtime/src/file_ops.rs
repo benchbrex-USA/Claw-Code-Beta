@@ -612,6 +612,24 @@ pub(crate) fn normalize_path_allow_missing(path: impl AsRef<Path>) -> io::Result
     normalize_missing_path(&absolute_path(path)?)
 }
 
+/// Resolve a path and enforce that it stays within the active workspace.
+///
+/// When `allow_missing` is true, the final path component may not exist yet.
+pub fn resolve_path_in_workspace(
+    path: &str,
+    workspace_root: &Path,
+    allow_missing: bool,
+) -> io::Result<PathBuf> {
+    let resolved_path = if allow_missing {
+        normalize_path_allow_missing(path)?
+    } else {
+        normalize_path(path)?
+    };
+    let canonical_root = canonical_workspace_root(workspace_root);
+    validate_workspace_boundary(&resolved_path, &canonical_root)?;
+    Ok(resolved_path)
+}
+
 /// Read a file with workspace boundary enforcement.
 pub fn read_file_in_workspace(
     path: &str,
@@ -619,9 +637,7 @@ pub fn read_file_in_workspace(
     limit: Option<usize>,
     workspace_root: &Path,
 ) -> io::Result<ReadFileOutput> {
-    let absolute_path = normalize_path(path)?;
-    let canonical_root = canonical_workspace_root(workspace_root);
-    validate_workspace_boundary(&absolute_path, &canonical_root)?;
+    let absolute_path = resolve_path_in_workspace(path, workspace_root, false)?;
     read_file_at_path(&absolute_path, offset, limit)
 }
 
@@ -631,9 +647,7 @@ pub fn write_file_in_workspace(
     content: &str,
     workspace_root: &Path,
 ) -> io::Result<WriteFileOutput> {
-    let absolute_path = normalize_path_allow_missing(path)?;
-    let canonical_root = canonical_workspace_root(workspace_root);
-    validate_workspace_boundary(&absolute_path, &canonical_root)?;
+    let absolute_path = resolve_path_in_workspace(path, workspace_root, true)?;
     write_file_at_path(&absolute_path, content)
 }
 
@@ -645,9 +659,7 @@ pub fn edit_file_in_workspace(
     replace_all: bool,
     workspace_root: &Path,
 ) -> io::Result<EditFileOutput> {
-    let absolute_path = normalize_path(path)?;
-    let canonical_root = canonical_workspace_root(workspace_root);
-    validate_workspace_boundary(&absolute_path, &canonical_root)?;
+    let absolute_path = resolve_path_in_workspace(path, workspace_root, false)?;
     edit_file_at_path(&absolute_path, old_string, new_string, replace_all)
 }
 

@@ -1,11 +1,3 @@
-#![allow(
-    dead_code,
-    unused_imports,
-    unused_variables,
-    clippy::unneeded_struct_pattern,
-    clippy::unnecessary_wraps,
-    clippy::unused_self
-)]
 mod init;
 mod input;
 mod render;
@@ -25,15 +17,14 @@ mod tests;
 use std::collections::BTreeSet;
 use std::env;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::net::TcpListener;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use api::{
     resolve_startup_auth_source, AnthropicClient, AuthSource, ContentBlockDelta, InputContentBlock,
@@ -44,23 +35,26 @@ use api::{
 use commands::{
     handle_agents_slash_command, handle_mcp_slash_command, handle_plugins_slash_command,
     handle_skills_slash_command, render_slash_command_help, resume_supported_slash_commands,
-    slash_command_specs, validate_slash_command_input, SlashCommand,
+    slash_command_specs, SlashCommand,
 };
 use compat_harness::{extract_manifest, UpstreamPaths};
 use auth::{run_login, run_logout};
 use cli_args::{
     default_permission_mode, filter_tool_specs, format_unknown_slash_command, parse_args,
-    permission_mode_from_label, resolve_model_alias, suggest_slash_commands,
+    permission_mode_from_label, resolve_model_alias,
 };
+#[cfg(test)]
+use cli_args::suggest_slash_commands;
 use cli_support::{
-    build_system_prompt, command_exists, convert_messages, format_bughunter_report,
-    format_issue_report, format_pr_report, format_ultraplan_report, git_output, git_status_ok,
-    init_claude_md, normalize_permission_mode, parse_titled_body, permission_policy, print_help,
-    print_help_to, recent_user_context, render_diff_report, render_diff_report_for,
-    render_export_text, render_last_tool_debug_report, render_teleport_report,
-    render_version_report, resolve_export_path, run_init, truncate_for_prompt, validate_no_args,
-    write_temp_text_file,
+    build_system_prompt, convert_messages, format_bughunter_report, format_issue_report,
+    format_pr_report, format_ultraplan_report, git_output, init_claude_md,
+    normalize_permission_mode, permission_policy, print_help, render_diff_report,
+    render_diff_report_for, render_export_text, render_last_tool_debug_report,
+    render_teleport_report, render_version_report, resolve_export_path, run_init,
+    validate_no_args,
 };
+#[cfg(test)]
+use cli_support::print_help_to;
 use cli_tools::{CliPermissionPrompter, CliToolExecutor};
 use init::initialize_repo;
 use plugins::{PluginHooks, PluginManager, PluginManagerConfig, PluginRegistry};
@@ -70,20 +64,15 @@ use runtime::{
     parse_oauth_callback_request_target, pricing_for_model, resolve_sandbox_status,
     save_oauth_credentials, ApiClient, ApiRequest, AssistantEvent, CompactionConfig, ConfigLoader,
     ConfigSource, ContentBlock, ConversationMessage, ConversationRuntime, McpServerManager,
-    McpTool, MessageRole, ModelPricing, OAuthAuthorizationRequest, OAuthConfig,
-    OAuthTokenExchangeRequest, PermissionMode, PermissionPolicy, ProjectContext, PromptCacheEvent,
-    ResolvedPermissionMode, RuntimeError, Session, TokenUsage, ToolError, ToolExecutor,
-    UsageTracker,
+    McpTool, MessageRole, OAuthAuthorizationRequest, OAuthConfig, OAuthTokenExchangeRequest,
+    PermissionMode, PermissionPolicy, ProjectContext, PromptCacheEvent, ResolvedPermissionMode,
+    RuntimeError, Session, TokenUsage, ToolError, UsageTracker,
 };
 use runtime_build::{
     build_plugin_manager, build_runtime, build_runtime_plugin_state_with_loader,
-    build_runtime_with_plugin_state, collect_prompt_cache_events, collect_tool_results,
-    collect_tool_uses, describe_tool_progress, final_assistant_text,
-    format_internal_prompt_progress_line, slash_command_completion_candidates_with_sessions,
-    BuiltRuntime, InternalPromptProgressEvent, InternalPromptProgressReporter,
-    InternalPromptProgressState, RuntimePluginState,
+    collect_prompt_cache_events, collect_tool_results, collect_tool_uses, final_assistant_text,
+    slash_command_completion_candidates_with_sessions, BuiltRuntime,
 };
-use serde::Deserialize;
 use serde_json::json;
 use session_store::{
     create_managed_session_handle, list_managed_sessions, render_session_list,
@@ -92,10 +81,11 @@ use session_store::{
 use session_reports::{
     format_auto_compaction_notice, format_compact_report, format_cost_report,
     format_model_report, format_model_switch_report, format_permissions_report,
-    format_permissions_switch_report, format_resume_report,
-    format_unknown_slash_command_message, render_resume_usage,
+    format_permissions_switch_report, format_resume_report, render_resume_usage,
 };
-use tools::{GlobalToolRegistry, RuntimeToolDefinition, ToolSearchOutput};
+#[cfg(test)]
+use session_reports::format_unknown_slash_command_message;
+use tools::{GlobalToolRegistry, RuntimeToolDefinition};
 use status_reports::{
     format_commit_preflight_report, format_commit_skipped_report, format_sandbox_report,
     format_status_report, print_sandbox_status_snapshot, print_status_snapshot,
@@ -107,10 +97,16 @@ use tool_output::{
     truncate_for_summary,
 };
 use workspace_status::{
-    parse_git_status_branch, parse_git_status_metadata, parse_git_status_metadata_for,
-    parse_git_workspace_summary, resolve_git_branch_for, GitWorkspaceSummary, StatusContext,
-    StatusUsage,
+    parse_git_status_branch, parse_git_status_metadata, parse_git_workspace_summary,
+    resolve_git_branch_for, GitWorkspaceSummary, StatusContext, StatusUsage,
 };
+#[cfg(test)]
+use runtime_build::{
+    build_runtime_with_plugin_state, describe_tool_progress, format_internal_prompt_progress_line,
+    InternalPromptProgressEvent, InternalPromptProgressState, RuntimePluginState,
+};
+#[cfg(test)]
+use workspace_status::parse_git_status_metadata_for;
 
 const DEFAULT_MODEL: &str = "claude-opus-4-6";
 fn max_tokens_for_model(model: &str) -> u32 {
@@ -125,7 +121,6 @@ const DEFAULT_OAUTH_CALLBACK_PORT: u16 = 4545;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const BUILD_TARGET: Option<&str> = option_env!("TARGET");
 const GIT_SHA: Option<&str> = option_env!("GIT_SHA");
-const INTERNAL_PROGRESS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(3);
 const PRIMARY_SESSION_EXTENSION: &str = "jsonl";
 const LEGACY_SESSION_EXTENSION: &str = "json";
 const LATEST_SESSION_REFERENCE: &str = "latest";
@@ -524,12 +519,12 @@ fn run_resume_command(
         }
         SlashCommand::Unknown(name) => Err(format_unknown_slash_command(name).into()),
         SlashCommand::Bughunter { .. }
-        | SlashCommand::Commit { .. }
+        | SlashCommand::Commit
         | SlashCommand::Pr { .. }
         | SlashCommand::Issue { .. }
         | SlashCommand::Ultraplan { .. }
         | SlashCommand::Teleport { .. }
-        | SlashCommand::DebugToolCall { .. }
+        | SlashCommand::DebugToolCall
         | SlashCommand::Resume { .. }
         | SlashCommand::Model { .. }
         | SlashCommand::Permissions { .. }
@@ -929,23 +924,23 @@ impl LiveCli {
                 false
             }
             SlashCommand::Bughunter { scope } => {
-                self.run_bughunter(scope.as_deref())?;
+                Self::run_bughunter(scope.as_deref());
                 false
             }
             SlashCommand::Commit => {
-                self.run_commit(None)?;
+                Self::run_commit(None)?;
                 false
             }
             SlashCommand::Pr { context } => {
-                self.run_pr(context.as_deref())?;
+                Self::run_pr(context.as_deref())?;
                 false
             }
             SlashCommand::Issue { context } => {
-                self.run_issue(context.as_deref())?;
+                Self::run_issue(context.as_deref());
                 false
             }
             SlashCommand::Ultraplan { task } => {
-                self.run_ultraplan(task.as_deref())?;
+                Self::run_ultraplan(task.as_deref());
                 false
             }
             SlashCommand::Teleport { target } => {
@@ -1474,47 +1469,12 @@ impl LiveCli {
         Ok(())
     }
 
-    fn run_internal_prompt_text_with_progress(
-        &self,
-        prompt: &str,
-        enable_tools: bool,
-        progress: Option<InternalPromptProgressReporter>,
-    ) -> Result<String, Box<dyn std::error::Error>> {
-        let session = self.runtime.session().clone();
-        let mut runtime = build_runtime(
-            session,
-            &self.session.id,
-            self.model.clone(),
-            self.system_prompt.clone(),
-            enable_tools,
-            false,
-            self.allowed_tools.clone(),
-            self.permission_mode,
-            progress,
-        )?;
-        let mut permission_prompter = CliPermissionPrompter::new(self.permission_mode);
-        let summary = runtime.run_turn(prompt, Some(&mut permission_prompter))?;
-        let text = final_assistant_text(&summary).trim().to_string();
-        runtime.shutdown_plugins()?;
-        Ok(text)
-    }
-
-    fn run_internal_prompt_text(
-        &self,
-        prompt: &str,
-        enable_tools: bool,
-    ) -> Result<String, Box<dyn std::error::Error>> {
-        self.run_internal_prompt_text_with_progress(prompt, enable_tools, None)
-    }
-
-    fn run_bughunter(&self, scope: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    fn run_bughunter(scope: Option<&str>) {
         println!("{}", format_bughunter_report(scope));
-        Ok(())
     }
 
-    fn run_ultraplan(&self, task: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    fn run_ultraplan(task: Option<&str>) {
         println!("{}", format_ultraplan_report(task));
-        Ok(())
     }
 
     fn run_teleport(target: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
@@ -1533,7 +1493,7 @@ impl LiveCli {
         Ok(())
     }
 
-    fn run_commit(&mut self, args: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    fn run_commit(args: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
         validate_no_args("/commit", args)?;
         let status = git_output(&["status", "--short", "--branch"])?;
         let summary = parse_git_workspace_summary(Some(&status));
@@ -1550,15 +1510,14 @@ impl LiveCli {
         Ok(())
     }
 
-    fn run_pr(&self, context: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    fn run_pr(context: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
         let branch =
             resolve_git_branch_for(&env::current_dir()?).unwrap_or_else(|| "unknown".to_string());
         println!("{}", format_pr_report(&branch, context));
         Ok(())
     }
 
-    fn run_issue(&self, context: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    fn run_issue(context: Option<&str>) {
         println!("{}", format_issue_report(context));
-        Ok(())
     }
 }

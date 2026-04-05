@@ -64,8 +64,9 @@ pub use conversation::{
 pub use file_ops::{
     edit_file, edit_file_in_workspace, glob_search, glob_search_in_workspace, grep_search,
     grep_search_in_workspace, read_file, read_file_in_workspace, write_file,
-    write_file_in_workspace, EditFileOutput, GlobSearchOutput, GrepSearchInput, GrepSearchOutput,
-    ReadFileOutput, StructuredPatchHunk, TextFilePayload, WriteFileOutput,
+    write_file_in_workspace, EditFileOutput, GlobSearchOutput, GrepSearchInput,
+    GrepSearchOutput, ReadFileOutput, StructuredPatchHunk, TextFilePayload,
+    WriteFileOutput, resolve_path_in_workspace,
 };
 pub use hooks::{
     HookAbortSignal, HookEvent, HookProgressEvent, HookProgressReporter, HookRunResult, HookRunner,

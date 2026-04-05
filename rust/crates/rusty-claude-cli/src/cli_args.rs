@@ -436,7 +436,7 @@ pub(super) fn default_permission_mode() -> PermissionMode {
         .and_then(normalize_permission_mode)
         .map(permission_mode_from_label)
         .or_else(config_permission_mode_for_current_dir)
-        .unwrap_or(PermissionMode::DangerFullAccess)
+        .unwrap_or(PermissionMode::WorkspaceWrite)
 }
 
 fn config_permission_mode_for_current_dir() -> Option<PermissionMode> {

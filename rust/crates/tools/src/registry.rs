@@ -1,16 +1,19 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use api::ToolDefinition;
 use plugins::PluginTool;
 use runtime::{
-    permission_enforcer::PermissionEnforcer, McpDegradedReport, PermissionMode,
+    permission_enforcer::PermissionEnforcer, resolve_path_in_workspace, McpDegradedReport,
+    PermissionMode,
 };
 use serde_json::Value;
 
 use crate::{
-    deferred_tool_specs, execute_tool_with_enforcer, maybe_enforce_permission_check,
-    mvp_tool_specs, normalize_tool_name, normalize_tool_search_query, permission_mode_from_plugin,
-    search_tool_specs, SearchableToolSpec, ToolSearchOutput,
+    current_workspace_root, deferred_tool_specs, execute_tool_with_enforcer,
+    maybe_enforce_permission_check, mvp_tool_specs, normalize_tool_name,
+    normalize_tool_search_query, permission_mode_from_plugin, search_tool_specs,
+    SearchableToolSpec, ToolSearchOutput,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -324,8 +327,7 @@ impl GlobalToolRegistry {
                 runtime_handler(tool, input)
             }
             DispatchTarget::Plugin(tool) => {
-                self.enforce(name, input)?;
-                tool.execute(input).map_err(|error| error.to_string())
+                self.execute_plugin_tool(name, tool, input)
             }
         }
     }
@@ -361,11 +363,25 @@ impl GlobalToolRegistry {
             DispatchTarget::Runtime(_) => Err(format!(
                 "runtime tool `{name}` requires a runtime dispatcher; compatibility note: call GlobalToolRegistry::execute_with_handlers for runtime/MCP tools"
             )),
-            DispatchTarget::Plugin(tool) => {
-                self.enforce(name, input)?;
-                tool.execute(input).map_err(|error| error.to_string())
-            }
+            DispatchTarget::Plugin(tool) => self.execute_plugin_tool(name, tool, input),
         }
+    }
+
+    fn execute_plugin_tool(
+        &self,
+        name: &str,
+        tool: &PluginTool,
+        input: &Value,
+    ) -> Result<String, String> {
+        self.enforce(name, input)?;
+        let workspace_root = current_workspace_root()?;
+        let mediated_workspace_root = resolve_path_in_workspace(".", &workspace_root, false)
+            .map_err(|error| {
+                format!("failed to resolve workspace root for plugin tool `{name}`: {error}")
+            })?;
+        validate_plugin_workspace_paths(tool, input, &mediated_workspace_root)?;
+        tool.execute_in_workspace(input, &mediated_workspace_root)
+            .map_err(|error| error.to_string())
     }
 
     fn searchable_tool_specs(&self) -> Vec<SearchableToolSpec> {
@@ -385,4 +401,101 @@ impl GlobalToolRegistry {
         });
         builtin.chain(runtime).chain(plugin).collect()
     }
+}
+
+fn validate_plugin_workspace_paths(
+    tool: &PluginTool,
+    input: &Value,
+    workspace_root: &Path,
+) -> Result<(), String> {
+    validate_plugin_value_paths(tool.definition().name.as_str(), None, input, workspace_root)
+}
+
+fn validate_plugin_value_paths(
+    tool_name: &str,
+    key: Option<&str>,
+    value: &Value,
+    workspace_root: &Path,
+) -> Result<(), String> {
+    match value {
+        Value::Object(object) => object.iter().try_for_each(|(child_key, child_value)| {
+            validate_plugin_value_paths(tool_name, Some(child_key), child_value, workspace_root)
+        }),
+        Value::Array(items) if key.is_some_and(is_path_list_key) => items.iter().try_for_each(
+            |item| validate_plugin_path_value(tool_name, key.unwrap_or("paths"), item, workspace_root),
+        ),
+        Value::Array(items) => items
+            .iter()
+            .try_for_each(|item| validate_plugin_value_paths(tool_name, None, item, workspace_root)),
+        Value::String(path) if key.is_some_and(is_path_key) => {
+            resolve_path_in_workspace(path, workspace_root, true)
+                .map(|_| ())
+                .map_err(|error| {
+                    format!(
+                        "plugin tool `{tool_name}` path `{path}` for `{}` is not workspace-safe: {error}",
+                        key.unwrap_or("path")
+                    )
+                })
+        }
+        _ => Ok(()),
+    }
+}
+
+fn validate_plugin_path_value(
+    tool_name: &str,
+    key: &str,
+    value: &Value,
+    workspace_root: &Path,
+) -> Result<(), String> {
+    match value {
+        Value::String(path) => resolve_path_in_workspace(path, workspace_root, true)
+            .map(|_| ())
+            .map_err(|error| {
+                format!(
+                    "plugin tool `{tool_name}` path `{path}` for `{key}` is not workspace-safe: {error}"
+                )
+            }),
+        Value::Array(items) => items
+            .iter()
+            .try_for_each(|item| validate_plugin_path_value(tool_name, key, item, workspace_root)),
+        Value::Object(object) => object.iter().try_for_each(|(child_key, child_value)| {
+            validate_plugin_value_paths(tool_name, Some(child_key), child_value, workspace_root)
+        }),
+        _ => Ok(()),
+    }
+}
+
+fn is_path_key(key: &str) -> bool {
+    matches!(
+        key,
+        "path"
+            | "file_path"
+            | "filePath"
+            | "notebook_path"
+            | "notebookPath"
+            | "cwd"
+            | "workdir"
+            | "directory"
+            | "dir"
+            | "root"
+            | "workspace_root"
+            | "workspaceRoot"
+            | "output_path"
+            | "outputPath"
+            | "input_path"
+            | "inputPath"
+            | "source_path"
+            | "sourcePath"
+            | "target_path"
+            | "targetPath"
+            | "destination_path"
+            | "destinationPath"
+    ) || key.ends_with("_path")
+        || key.ends_with("Path")
+}
+
+fn is_path_list_key(key: &str) -> bool {
+    matches!(key, "paths" | "file_paths" | "filePaths" | "files")
+        || key.ends_with("_paths")
+        || key.ends_with("Paths")
 }

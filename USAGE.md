@@ -1,6 +1,6 @@
 # Usage
 
-This guide covers the current Rust workspace and the `claw` CLI binary.
+This is the canonical task-oriented guide for the current Rust workspace and the `claw` CLI binary.
 
 ## Build
 
@@ -57,6 +57,8 @@ Common commands:
 - `workspace-write`: local reads and writes are allowed only inside the active workspace root.
 - `danger-full-access`: unrestricted local mutation.
 
+The default permission mode is `workspace-write`.
+
 Examples:
 
 ```bash
@@ -69,15 +71,13 @@ Examples:
 ## How Workspace-Write Works
 
 - The active workspace is the directory where you launch `claw`.
-- Local file and notebook tools normalize paths against that root.
+- Local file, notebook, and plugin path inputs are normalized against that root.
 - Absolute paths, `..` traversal, missing-target escapes, and symlink escapes are denied when they resolve outside the workspace.
 - Bash can stay at `workspace-write` only when the active sandbox configuration is actually enforcing filesystem isolation. Otherwise the runtime treats the command as `danger-full-access`.
 
 ## Approval Prompts
 
-The stock CLI exposes three modes, but the runtime also has an internal approval path. The same prompt is used when a `workspace-write` session needs to escalate a tool call to `danger-full-access`.
-
-When approval is required, the CLI prints:
+The same prompt is used whenever a session needs to escalate a tool call to a stronger mode:
 
 ```text
 Permission approval required
@@ -90,6 +90,49 @@ Approve this tool call? [y/N]:
 ```
 
 Type `y` or `yes` to approve. Any other response denies the tool call.
+
+## Slash Commands
+
+Tab completion expands slash commands, model aliases, permission modes, and recent session IDs.
+
+Common commands:
+
+- `/help`
+- `/status`
+- `/cost`
+- `/compact`
+- `/clear`
+- `/model [name]`
+- `/permissions [mode]`
+- `/config [section]`
+- `/memory`
+- `/diff`
+- `/export [path]`
+- `/resume [id]`
+- `/session [id]`
+- `/version`
+
+## Mock Parity Harness
+
+The workspace includes a deterministic Anthropic-compatible mock service and a clean-environment CLI harness for end-to-end parity checks.
+
+```bash
+cd rust
+./scripts/run_mock_parity_harness.sh
+```
+
+Scenario coverage currently includes:
+
+- `streaming_text`
+- `read_file_roundtrip`
+- `grep_chunk_assembly`
+- `write_file_allowed`
+- `write_file_denied`
+- `multi_tool_turn_roundtrip`
+- `bash_stdout_roundtrip`
+- `bash_permission_prompt_approved`
+- `bash_permission_prompt_denied`
+- `plugin_tool_roundtrip`
 
 ## Verification
 

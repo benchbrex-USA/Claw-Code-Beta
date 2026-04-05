@@ -302,6 +302,23 @@ impl PluginTool {
     }
 
     pub fn execute(&self, input: &Value) -> Result<String, PluginError> {
+        self.execute_with_context(input, self.root.as_deref(), None)
+    }
+
+    pub fn execute_in_workspace(
+        &self,
+        input: &Value,
+        workspace_root: &Path,
+    ) -> Result<String, PluginError> {
+        self.execute_with_context(input, Some(workspace_root), Some(workspace_root))
+    }
+
+    fn execute_with_context(
+        &self,
+        input: &Value,
+        working_dir: Option<&Path>,
+        workspace_root: Option<&Path>,
+    ) -> Result<String, PluginError> {
         let input_json = input.to_string();
         let mut process = Command::new(&self.command);
         process
@@ -314,9 +331,13 @@ impl PluginTool {
             .env("CLAWD_TOOL_NAME", &self.definition.name)
             .env("CLAWD_TOOL_INPUT", &input_json);
         if let Some(root) = &self.root {
-            process
-                .current_dir(root)
-                .env("CLAWD_PLUGIN_ROOT", root.display().to_string());
+            process.env("CLAWD_PLUGIN_ROOT", root.display().to_string());
+        }
+        if let Some(workspace_root) = workspace_root {
+            process.env("CLAWD_WORKSPACE_ROOT", workspace_root.display().to_string());
+        }
+        if let Some(working_dir) = working_dir {
+            process.current_dir(working_dir);
         }
 
         let mut child = process.spawn()?;

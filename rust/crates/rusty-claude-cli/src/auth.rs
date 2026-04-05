@@ -1,6 +1,7 @@
 #![allow(clippy::wildcard_imports)]
 
 use super::*;
+use std::io::Read;
 
 fn default_oauth_config() -> OAuthConfig {
     OAuthConfig {
