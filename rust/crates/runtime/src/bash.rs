@@ -167,7 +167,10 @@ async fn execute_bash_async(
     })
 }
 
-fn sandbox_status_for_input(input: &BashCommandInput, cwd: &std::path::Path) -> SandboxStatus {
+pub(crate) fn sandbox_status_for_input(
+    input: &BashCommandInput,
+    cwd: &std::path::Path,
+) -> SandboxStatus {
     let config = ConfigLoader::default_for(cwd).load().map_or_else(
         |_| SandboxConfig::default(),
         |runtime_config| runtime_config.sandbox().clone(),

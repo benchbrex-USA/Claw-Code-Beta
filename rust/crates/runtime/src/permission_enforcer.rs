@@ -8,6 +8,7 @@ use crate::permissions::{
     PermissionMode, PermissionOutcome, PermissionPolicy, PermissionPromptDecision,
     PermissionPrompter, PermissionRequest,
 };
+use crate::BashCommandInput;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -78,7 +79,7 @@ impl PermissionEnforcer {
     #[must_use]
     pub fn check(&self, tool_name: &str, input: &str) -> EnforcementResult {
         let active_mode = self.policy.active_mode();
-        let required_mode = self.policy.required_mode_for(tool_name);
+        let required_mode = self.policy.required_mode_for_invocation(tool_name, input);
         let mut probe = ConfirmationProbe::default();
         let outcome = self.policy.authorize(tool_name, input, Some(&mut probe));
 
@@ -162,6 +163,10 @@ impl PermissionEnforcer {
     /// Check if a bash command should be allowed based on current mode.
     #[must_use]
     pub fn check_bash(&self, command: &str) -> EnforcementResult {
+        if serde_json::from_str::<BashCommandInput>(command).is_ok() {
+            return self.check("bash", command);
+        }
+
         let mode = self.policy.active_mode();
 
         match mode {

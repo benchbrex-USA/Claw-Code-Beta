@@ -1,2 +1,4 @@
 [build]
+# This volume intermittently breaks Cargo incremental artifacts via filesystem
+# semantics/hardlink behavior, so keep workspace verification deterministic.
 incremental = false

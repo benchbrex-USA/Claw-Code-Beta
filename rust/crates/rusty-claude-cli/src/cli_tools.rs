@@ -4,8 +4,9 @@ use std::sync::{Arc, Mutex};
 use runtime::{PermissionMode, ToolError, ToolExecutor};
 use serde::Deserialize;
 
-use crate::{format_tool_result, AllowedToolSet, GlobalToolRegistry, RuntimeMcpState};
 use crate::render::TerminalRenderer;
+use crate::runtime_build::RuntimeMcpState;
+use crate::{format_tool_result, AllowedToolSet, GlobalToolRegistry};
 
 #[derive(Debug, Deserialize)]
 struct ToolSearchRequest {

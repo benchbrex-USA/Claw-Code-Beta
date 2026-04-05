@@ -2653,7 +2653,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "flaky: intermittent timing issues in CI, see ROADMAP P2.15"]
     fn manager_discovery_report_keeps_healthy_servers_when_one_server_fails() {
         let runtime = Builder::new_current_thread()
             .enable_all()
@@ -2661,8 +2660,10 @@ mod tests {
             .expect("runtime");
         runtime.block_on(async {
             let script_path = write_manager_mcp_server_script();
+            let broken_script_path = write_jsonrpc_script();
             let root = script_path.parent().expect("script parent");
             let alpha_log = root.join("alpha.log");
+            let broken_log = root.join("broken.log");
             let servers = BTreeMap::from([
                 (
                     "alpha".to_string(),
@@ -2670,15 +2671,15 @@ mod tests {
                 ),
                 (
                     "broken".to_string(),
-                    ScopedMcpServerConfig {
-                        scope: ConfigSource::Local,
-                        config: McpServerConfig::Stdio(McpStdioServerConfig {
-                            command: "python3".to_string(),
-                            args: vec!["-c".to_string(), "import sys; sys.exit(0)".to_string()],
-                            env: BTreeMap::new(),
-                            tool_call_timeout_ms: None,
-                        }),
-                    },
+                    manager_server_config_with_env(
+                        &broken_script_path,
+                        "broken",
+                        &broken_log,
+                        BTreeMap::from([(
+                            "MCP_MISMATCHED_RESPONSE_ID".to_string(),
+                            "1".to_string(),
+                        )]),
+                    ),
                 ),
             ]);
             let mut manager = McpServerManager::from_servers(&servers);
@@ -2737,6 +2738,7 @@ mod tests {
 
             manager.shutdown().await.expect("shutdown");
             cleanup_script(&script_path);
+            cleanup_script(&broken_script_path);
         });
     }
 

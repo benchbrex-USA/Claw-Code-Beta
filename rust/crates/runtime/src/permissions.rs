@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
+use crate::bash::{sandbox_status_for_input, BashCommandInput};
 use crate::config::RuntimePermissionRuleConfig;
+use crate::sandbox::SandboxStatus;
 
 /// Permission level assigned to a tool invocation or runtime session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -161,6 +163,15 @@ impl PermissionPolicy {
     }
 
     #[must_use]
+    pub fn required_mode_for_invocation(&self, tool_name: &str, input: &str) -> PermissionMode {
+        if tool_name == "bash" {
+            return derive_bash_required_mode(input).unwrap_or_else(|| self.required_mode_for(tool_name));
+        }
+
+        self.required_mode_for(tool_name)
+    }
+
+    #[must_use]
     pub fn authorize(
         &self,
         tool_name: &str,
@@ -189,7 +200,7 @@ impl PermissionPolicy {
         }
 
         let current_mode = self.active_mode();
-        let required_mode = self.required_mode_for(tool_name);
+        let required_mode = self.required_mode_for_invocation(tool_name, input);
         let ask_rule = Self::find_matching_rule(&self.ask_rules, tool_name, input);
         let allow_rule = Self::find_matching_rule(&self.allow_rules, tool_name, input);
 
@@ -351,6 +362,22 @@ impl PermissionPolicy {
     }
 }
 
+fn derive_bash_required_mode(input: &str) -> Option<PermissionMode> {
+    let parsed = serde_json::from_str::<BashCommandInput>(input).ok()?;
+    let cwd = std::env::current_dir().ok()?;
+    let sandbox_status = sandbox_status_for_input(&parsed, &cwd);
+
+    Some(bash_required_mode_from_status(&sandbox_status))
+}
+
+fn bash_required_mode_from_status(sandbox_status: &SandboxStatus) -> PermissionMode {
+    if sandbox_status.active && sandbox_status.filesystem_active {
+        PermissionMode::WorkspaceWrite
+    } else {
+        PermissionMode::DangerFullAccess
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PermissionRule {
     raw: String,
@@ -490,10 +517,12 @@ fn extract_permission_subject(input: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        PermissionContext, PermissionMode, PermissionOutcome, PermissionOverride, PermissionPolicy,
-        PermissionPromptDecision, PermissionPrompter, PermissionRequest,
+        bash_required_mode_from_status, PermissionContext, PermissionMode, PermissionOutcome,
+        PermissionOverride, PermissionPolicy, PermissionPromptDecision, PermissionPrompter,
+        PermissionRequest,
     };
     use crate::config::RuntimePermissionRuleConfig;
+    use crate::sandbox::{FilesystemIsolationMode, SandboxRequest, SandboxStatus};
 
     struct RecordingPrompter {
         seen: Vec<PermissionRequest>,
@@ -579,6 +608,58 @@ mod tests {
             prompter.seen[0].current_mode,
             PermissionMode::WorkspaceWrite
         );
+        assert_eq!(
+            prompter.seen[0].required_mode,
+            PermissionMode::DangerFullAccess
+        );
+    }
+
+    #[test]
+    fn active_workspace_sandbox_only_requires_workspace_write() {
+        let status = SandboxStatus {
+            active: true,
+            filesystem_active: true,
+            filesystem_mode: FilesystemIsolationMode::WorkspaceOnly,
+            requested: SandboxRequest {
+                enabled: true,
+                namespace_restrictions: true,
+                network_isolation: false,
+                filesystem_mode: FilesystemIsolationMode::WorkspaceOnly,
+                allowed_mounts: Vec::new(),
+            },
+            ..SandboxStatus::default()
+        };
+
+        assert_eq!(
+            bash_required_mode_from_status(&status),
+            PermissionMode::WorkspaceWrite
+        );
+    }
+
+    #[test]
+    fn unsandboxed_bash_json_still_requires_danger_full_access() {
+        let policy = PermissionPolicy::new(PermissionMode::WorkspaceWrite)
+            .with_tool_requirement("bash", PermissionMode::DangerFullAccess);
+        let mut prompter = RecordingPrompter {
+            seen: Vec::new(),
+            allow: true,
+        };
+
+        let outcome = policy.authorize(
+            "bash",
+            r#"{"command":"git status","dangerouslyDisableSandbox":true}"#,
+            Some(&mut prompter),
+        );
+
+        assert_eq!(outcome, PermissionOutcome::Allow);
+        assert_eq!(
+            policy.required_mode_for_invocation(
+                "bash",
+                r#"{"command":"git status","dangerouslyDisableSandbox":true}"#
+            ),
+            PermissionMode::DangerFullAccess
+        );
+        assert_eq!(prompter.seen.len(), 1);
         assert_eq!(
             prompter.seen[0].required_mode,
             PermissionMode::DangerFullAccess
