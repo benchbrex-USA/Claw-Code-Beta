@@ -1,14 +1,37 @@
 //! Permission enforcement layer that gates tool execution based on the
 //! active `PermissionPolicy`.
 
-use crate::permissions::{PermissionMode, PermissionOutcome, PermissionPolicy};
+use crate::file_ops::{
+    canonical_workspace_root, normalize_path_allow_missing, validate_workspace_boundary,
+};
+use crate::permissions::{
+    PermissionMode, PermissionOutcome, PermissionPolicy, PermissionPromptDecision,
+    PermissionPrompter, PermissionRequest,
+};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "outcome")]
 pub enum EnforcementResult {
     /// Tool execution is allowed.
     Allowed,
+    /// Tool execution requires explicit confirmation before it may proceed.
+    ///
+    /// This is returned when policy evaluation reaches an approval path but the
+    /// current caller is only classifying the request, not running an
+    /// interactive prompt. Callers should surface the payload to the approval
+    /// UX and fail closed if no such UX is available.
+    NeedsConfirmation {
+        /// Tool name presented for approval.
+        tool: String,
+        /// Permission mode active when the check ran.
+        active_mode: String,
+        /// Minimum permission mode required to proceed without prompting.
+        required_mode: String,
+        /// Human-readable explanation for the approval requirement.
+        reason: String,
+    },
     /// Tool execution was denied due to insufficient permissions.
     Denied {
         tool: String,
@@ -23,6 +46,26 @@ pub struct PermissionEnforcer {
     policy: PermissionPolicy,
 }
 
+#[derive(Debug, Default)]
+struct ConfirmationProbe {
+    request: Option<PermissionRequest>,
+}
+
+impl PermissionPrompter for ConfirmationProbe {
+    fn decide(&mut self, request: &PermissionRequest) -> PermissionPromptDecision {
+        self.request = Some(request.clone());
+        PermissionPromptDecision::Deny {
+            reason: request.reason.clone().unwrap_or_else(|| {
+                format!(
+                    "tool '{}' requires explicit confirmation while mode is {}",
+                    request.tool_name,
+                    request.current_mode.as_str()
+                )
+            }),
+        }
+    }
+}
+
 impl PermissionEnforcer {
     #[must_use]
     pub fn new(policy: PermissionPolicy) -> Self {
@@ -30,29 +73,37 @@ impl PermissionEnforcer {
     }
 
     /// Check whether a tool can be executed under the current permission policy.
-    /// Auto-denies when prompting is required but no prompter is provided.
+    /// Returns [`EnforcementResult::NeedsConfirmation`] when interactive
+    /// approval would be required but no prompt handler is wired.
     #[must_use]
     pub fn check(&self, tool_name: &str, input: &str) -> EnforcementResult {
-        // When the active mode is Prompt, defer to the caller's interactive
-        // prompt flow rather than hard-denying (the enforcer has no prompter).
-        if self.policy.active_mode() == PermissionMode::Prompt {
-            return EnforcementResult::Allowed;
-        }
+        let active_mode = self.policy.active_mode();
+        let required_mode = self.policy.required_mode_for(tool_name);
+        let mut probe = ConfirmationProbe::default();
+        let outcome = self.policy.authorize(tool_name, input, Some(&mut probe));
 
-        let outcome = self.policy.authorize(tool_name, input, None);
+        if let Some(request) = probe.request {
+            return EnforcementResult::NeedsConfirmation {
+                tool: request.tool_name,
+                active_mode: request.current_mode.as_str().to_owned(),
+                required_mode: request.required_mode.as_str().to_owned(),
+                reason: request.reason.unwrap_or_else(|| {
+                    format!(
+                        "tool '{tool_name}' requires explicit confirmation while mode is {}",
+                        active_mode.as_str()
+                    )
+                }),
+            };
+        }
 
         match outcome {
             PermissionOutcome::Allow => EnforcementResult::Allowed,
-            PermissionOutcome::Deny { reason } => {
-                let active_mode = self.policy.active_mode();
-                let required_mode = self.policy.required_mode_for(tool_name);
-                EnforcementResult::Denied {
-                    tool: tool_name.to_owned(),
-                    active_mode: active_mode.as_str().to_owned(),
-                    required_mode: required_mode.as_str().to_owned(),
-                    reason,
-                }
-            }
+            PermissionOutcome::Deny { reason } => EnforcementResult::Denied {
+                tool: tool_name.to_owned(),
+                active_mode: active_mode.as_str().to_owned(),
+                required_mode: required_mode.as_str().to_owned(),
+                reason,
+            },
         }
     }
 
@@ -68,7 +119,7 @@ impl PermissionEnforcer {
 
     /// Classify a file operation against workspace boundaries.
     #[must_use]
-    pub fn check_file_write(&self, path: &str, workspace_root: &str) -> EnforcementResult {
+    pub fn check_file_write(&self, path: &Path, workspace_root: &Path) -> EnforcementResult {
         let mode = self.policy.active_mode();
 
         match mode {
@@ -79,26 +130,31 @@ impl PermissionEnforcer {
                 reason: format!("file writes are not allowed in '{}' mode", mode.as_str()),
             },
             PermissionMode::WorkspaceWrite => {
-                if is_within_workspace(path, workspace_root) {
-                    EnforcementResult::Allowed
-                } else {
-                    EnforcementResult::Denied {
+                match boundary_checked_write_path(path, workspace_root) {
+                    Ok(_) => EnforcementResult::Allowed,
+                    Err(error) => EnforcementResult::Denied {
                         tool: "write_file".to_owned(),
                         active_mode: mode.as_str().to_owned(),
                         required_mode: PermissionMode::DangerFullAccess.as_str().to_owned(),
-                        reason: format!(
-                            "path '{path}' is outside workspace root '{workspace_root}'"
-                        ),
-                    }
+                        reason: error.to_string(),
+                    },
                 }
             }
             // Allow and DangerFullAccess permit all writes
             PermissionMode::Allow | PermissionMode::DangerFullAccess => EnforcementResult::Allowed,
-            PermissionMode::Prompt => EnforcementResult::Denied {
-                tool: "write_file".to_owned(),
-                active_mode: mode.as_str().to_owned(),
-                required_mode: PermissionMode::WorkspaceWrite.as_str().to_owned(),
-                reason: "file write requires confirmation in prompt mode".to_owned(),
+            PermissionMode::Prompt => match boundary_checked_write_path(path, workspace_root) {
+                Ok(_) => EnforcementResult::NeedsConfirmation {
+                    tool: "write_file".to_owned(),
+                    active_mode: mode.as_str().to_owned(),
+                    required_mode: PermissionMode::WorkspaceWrite.as_str().to_owned(),
+                    reason: "file write requires explicit confirmation in prompt mode".to_owned(),
+                },
+                Err(error) => EnforcementResult::Denied {
+                    tool: "write_file".to_owned(),
+                    active_mode: mode.as_str().to_owned(),
+                    required_mode: PermissionMode::DangerFullAccess.as_str().to_owned(),
+                    reason: error.to_string(),
+                },
             },
         }
     }
@@ -124,11 +180,11 @@ impl PermissionEnforcer {
                     }
                 }
             }
-            PermissionMode::Prompt => EnforcementResult::Denied {
+            PermissionMode::Prompt => EnforcementResult::NeedsConfirmation {
                 tool: "bash".to_owned(),
                 active_mode: mode.as_str().to_owned(),
                 required_mode: PermissionMode::DangerFullAccess.as_str().to_owned(),
-                reason: "bash requires confirmation in prompt mode".to_owned(),
+                reason: "bash requires explicit confirmation in prompt mode".to_owned(),
             },
             // WorkspaceWrite, Allow, DangerFullAccess: permit bash
             _ => EnforcementResult::Allowed,
@@ -136,21 +192,10 @@ impl PermissionEnforcer {
     }
 }
 
-/// Simple workspace boundary check via string prefix.
-fn is_within_workspace(path: &str, workspace_root: &str) -> bool {
-    let normalized = if path.starts_with('/') {
-        path.to_owned()
-    } else {
-        format!("{workspace_root}/{path}")
-    };
-
-    let root = if workspace_root.ends_with('/') {
-        workspace_root.to_owned()
-    } else {
-        format!("{workspace_root}/")
-    };
-
-    normalized.starts_with(&root) || normalized == workspace_root.trim_end_matches('/')
+fn boundary_checked_write_path(path: &Path, workspace_root: &Path) -> std::io::Result<()> {
+    let resolved_path = normalize_path_allow_missing(path)?;
+    let canonical_root = canonical_workspace_root(workspace_root);
+    validate_workspace_boundary(&resolved_path, &canonical_root)
 }
 
 /// Conservative heuristic: is this bash command read-only?
@@ -237,10 +282,37 @@ fn is_read_only_command(command: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Mutex, MutexGuard, OnceLock};
 
     fn make_enforcer(mode: PermissionMode) -> PermissionEnforcer {
         let policy = PermissionPolicy::new(mode);
         PermissionEnforcer::new(policy)
+    }
+
+    fn temp_path(label: &str) -> PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("permission-enforcer-{nanos}-{counter}-{label}"))
+    }
+
+    fn create_workspace(label: &str) -> PathBuf {
+        let workspace = temp_path(label);
+        fs::create_dir_all(&workspace).expect("workspace should exist");
+        workspace
+    }
+
+    fn env_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     #[test]
@@ -250,7 +322,7 @@ mod tests {
         assert!(enforcer.is_allowed("write_file", ""));
         assert!(enforcer.is_allowed("edit_file", ""));
         assert_eq!(
-            enforcer.check_file_write("/outside/path", "/workspace"),
+            enforcer.check_file_write(Path::new("/outside/path"), Path::new("/workspace")),
             EnforcementResult::Allowed
         );
         assert_eq!(enforcer.check_bash("rm -rf /"), EnforcementResult::Allowed);
@@ -271,7 +343,8 @@ mod tests {
         let result = enforcer.check("write_file", "");
         assert!(matches!(result, EnforcementResult::Denied { .. }));
 
-        let result = enforcer.check_file_write("/workspace/file.rs", "/workspace");
+        let result =
+            enforcer.check_file_write(Path::new("/workspace/file.rs"), Path::new("/workspace"));
         assert!(matches!(result, EnforcementResult::Denied { .. }));
     }
 
@@ -299,33 +372,75 @@ mod tests {
     #[test]
     fn workspace_write_allows_within_workspace() {
         let enforcer = make_enforcer(PermissionMode::WorkspaceWrite);
-        let result = enforcer.check_file_write("/workspace/src/main.rs", "/workspace");
+        let workspace = create_workspace("allows-within-workspace");
+        let result = enforcer.check_file_write(&workspace.join("src/main.rs"), &workspace);
         assert_eq!(result, EnforcementResult::Allowed);
+        let _ = fs::remove_dir_all(workspace);
     }
 
     #[test]
     fn workspace_write_denies_outside_workspace() {
         let enforcer = make_enforcer(PermissionMode::WorkspaceWrite);
-        let result = enforcer.check_file_write("/etc/passwd", "/workspace");
+        let workspace = create_workspace("denies-outside-workspace");
+        let result = enforcer.check_file_write(&temp_path("outside.txt"), &workspace);
         assert!(matches!(result, EnforcementResult::Denied { .. }));
+        let _ = fs::remove_dir_all(workspace);
     }
 
     #[test]
     fn prompt_mode_denies_without_prompter() {
         let enforcer = make_enforcer(PermissionMode::Prompt);
         let result = enforcer.check_bash("echo test");
-        assert!(matches!(result, EnforcementResult::Denied { .. }));
+        assert!(matches!(
+            result,
+            EnforcementResult::NeedsConfirmation { .. }
+        ));
 
-        let result = enforcer.check_file_write("/workspace/file.rs", "/workspace");
-        assert!(matches!(result, EnforcementResult::Denied { .. }));
+        let workspace = create_workspace("prompt-mode");
+        let result = enforcer.check_file_write(&workspace.join("file.rs"), &workspace);
+        assert!(matches!(
+            result,
+            EnforcementResult::NeedsConfirmation { .. }
+        ));
+        let _ = fs::remove_dir_all(workspace);
     }
 
     #[test]
-    fn workspace_boundary_check() {
-        assert!(is_within_workspace("/workspace/src/main.rs", "/workspace"));
-        assert!(is_within_workspace("/workspace", "/workspace"));
-        assert!(!is_within_workspace("/etc/passwd", "/workspace"));
-        assert!(!is_within_workspace("/workspacex/hack", "/workspace"));
+    fn prompt_mode_denies_outside_workspace_without_confirmation() {
+        let enforcer = make_enforcer(PermissionMode::Prompt);
+        let workspace = create_workspace("prompt-outside-workspace");
+
+        let result = enforcer.check_file_write(&temp_path("outside.txt"), &workspace);
+
+        assert!(matches!(result, EnforcementResult::Denied { .. }));
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn workspace_write_denies_parent_traversal_outside_workspace() {
+        let enforcer = make_enforcer(PermissionMode::WorkspaceWrite);
+        let workspace = create_workspace("parent-traversal");
+        let result = enforcer.check_file_write(&workspace.join("../escape.txt"), &workspace);
+        assert!(matches!(result, EnforcementResult::Denied { .. }));
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_write_denies_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let enforcer = make_enforcer(PermissionMode::WorkspaceWrite);
+        let workspace = create_workspace("symlink-escape-workspace");
+        let outside = create_workspace("symlink-escape-outside");
+        let link = workspace.join("escape-link");
+        symlink(&outside, &link).expect("symlink should be created");
+
+        let result = enforcer.check_file_write(&link.join("nested.txt"), &workspace);
+        assert!(matches!(result, EnforcementResult::Denied { .. }));
+
+        let _ = fs::remove_dir_all(workspace);
+        let _ = fs::remove_dir_all(outside);
     }
 
     #[test]
@@ -365,12 +480,15 @@ mod tests {
         let enforcer = make_enforcer(PermissionMode::DangerFullAccess);
 
         // when
-        let file_result = enforcer.check_file_write("/outside/workspace/file.txt", "/workspace");
+        let workspace = create_workspace("danger-full-access");
+        let file_result =
+            enforcer.check_file_write(&temp_path("outside-workspace-file.txt"), &workspace);
         let bash_result = enforcer.check_bash("rm -rf /tmp/scratch");
 
         // then
         assert_eq!(file_result, EnforcementResult::Allowed);
         assert_eq!(bash_result, EnforcementResult::Allowed);
+        let _ = fs::remove_dir_all(workspace);
     }
 
     #[test]
@@ -396,7 +514,7 @@ mod tests {
                 assert_eq!(required_mode, "workspace-write");
                 assert!(reason.contains("requires workspace-write permission"));
             }
-            other @ EnforcementResult::Allowed => {
+            other => {
                 panic!("expected denied result, got {other:?}")
             }
         }
@@ -405,37 +523,43 @@ mod tests {
     #[test]
     fn workspace_write_relative_path_resolved() {
         // given
+        let _guard = env_lock();
         let enforcer = make_enforcer(PermissionMode::WorkspaceWrite);
+        let workspace = create_workspace("relative-path");
+        let original_dir = std::env::current_dir().expect("cwd should be readable");
+        std::env::set_current_dir(&workspace).expect("workspace should be enterable");
 
         // when
-        let result = enforcer.check_file_write("src/main.rs", "/workspace");
+        let result = enforcer.check_file_write(Path::new("src/main.rs"), &workspace);
 
         // then
         assert_eq!(result, EnforcementResult::Allowed);
+        std::env::set_current_dir(&original_dir).expect("cwd should restore");
+        let _ = fs::remove_dir_all(workspace);
     }
 
     #[test]
     fn workspace_root_with_trailing_slash() {
         // given
         let enforcer = make_enforcer(PermissionMode::WorkspaceWrite);
+        let workspace = create_workspace("workspace-root-trailing-slash");
+        let workspace_root = PathBuf::from(format!("{}/", workspace.display()));
 
         // when
-        let result = enforcer.check_file_write("/workspace/src/main.rs", "/workspace/");
+        let result = enforcer.check_file_write(&workspace.join("src/main.rs"), &workspace_root);
 
         // then
         assert_eq!(result, EnforcementResult::Allowed);
+        let _ = fs::remove_dir_all(workspace);
     }
 
     #[test]
-    fn workspace_root_equality() {
-        // given
-        let root = "/workspace/";
-
-        // when
-        let equal_to_root = is_within_workspace("/workspace", root);
-
-        // then
-        assert!(equal_to_root);
+    fn workspace_write_allows_root_path() {
+        let enforcer = make_enforcer(PermissionMode::WorkspaceWrite);
+        let workspace = create_workspace("workspace-root");
+        let result = enforcer.check_file_write(&workspace, &workspace);
+        assert_eq!(result, EnforcementResult::Allowed);
+        let _ = fs::remove_dir_all(workspace);
     }
 
     #[test]
@@ -508,7 +632,7 @@ mod tests {
 
         // then
         match result {
-            EnforcementResult::Denied {
+            EnforcementResult::NeedsConfirmation {
                 tool,
                 active_mode,
                 required_mode,
@@ -517,10 +641,36 @@ mod tests {
                 assert_eq!(tool, "bash");
                 assert_eq!(active_mode, "prompt");
                 assert_eq!(required_mode, "danger-full-access");
-                assert_eq!(reason, "bash requires confirmation in prompt mode");
+                assert_eq!(reason, "bash requires explicit confirmation in prompt mode");
             }
-            other @ EnforcementResult::Allowed => {
-                panic!("expected denied result, got {other:?}")
+            other => {
+                panic!("expected confirmation-needed result, got {other:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn prompt_mode_check_requires_confirmation_payload_fields() {
+        let policy = PermissionPolicy::new(PermissionMode::Prompt)
+            .with_tool_requirement("read_file", PermissionMode::ReadOnly);
+        let enforcer = PermissionEnforcer::new(policy);
+
+        let result = enforcer.check("read_file", "{}");
+
+        match result {
+            EnforcementResult::NeedsConfirmation {
+                tool,
+                active_mode,
+                required_mode,
+                reason,
+            } => {
+                assert_eq!(tool, "read_file");
+                assert_eq!(active_mode, "prompt");
+                assert_eq!(required_mode, "read-only");
+                assert!(reason.contains("requires explicit confirmation while mode is prompt"));
+            }
+            other => {
+                panic!("expected confirmation-needed result, got {other:?}")
             }
         }
     }
@@ -531,7 +681,8 @@ mod tests {
         let enforcer = make_enforcer(PermissionMode::ReadOnly);
 
         // when
-        let result = enforcer.check_file_write("/workspace/file.txt", "/workspace");
+        let workspace = create_workspace("read-only-write-denied");
+        let result = enforcer.check_file_write(&workspace.join("file.txt"), &workspace);
 
         // then
         match result {
@@ -546,9 +697,10 @@ mod tests {
                 assert_eq!(required_mode, "workspace-write");
                 assert!(reason.contains("file writes are not allowed"));
             }
-            other @ EnforcementResult::Allowed => {
+            other => {
                 panic!("expected denied result, got {other:?}")
             }
         }
+        let _ = fs::remove_dir_all(workspace);
     }
 }

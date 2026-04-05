@@ -119,6 +119,14 @@ pub struct RuntimeToolDefinition {
     pub required_permission: PermissionMode,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum DispatchTarget<'a> {
+    ToolSearch,
+    Builtin,
+    Runtime(&'a RuntimeToolDefinition),
+    Plugin(&'a PluginTool),
+}
+
 impl GlobalToolRegistry {
     #[must_use]
     pub fn builtin() -> Self {
@@ -305,11 +313,6 @@ impl GlobalToolRegistry {
     }
 
     #[must_use]
-    pub fn has_runtime_tool(&self, name: &str) -> bool {
-        self.runtime_tools.iter().any(|tool| tool.name == name)
-    }
-
-    #[must_use]
     pub fn search(
         &self,
         query: &str,
@@ -339,17 +342,75 @@ impl GlobalToolRegistry {
         maybe_enforce_permission_check(self.enforcer.as_ref(), name, input)
     }
 
-    pub fn execute(&self, name: &str, input: &Value) -> Result<String, String> {
-        if mvp_tool_specs().iter().any(|spec| spec.name == name) {
-            return execute_tool_with_enforcer(self.enforcer.as_ref(), name, input);
+    fn resolve_dispatch_target(&self, name: &str) -> Result<DispatchTarget<'_>, String> {
+        if name == "ToolSearch" {
+            return Ok(DispatchTarget::ToolSearch);
         }
-        let tool = self
+        if mvp_tool_specs().iter().any(|spec| spec.name == name) {
+            return Ok(DispatchTarget::Builtin);
+        }
+        if let Some(tool) = self.runtime_tools.iter().find(|tool| tool.name == name) {
+            return Ok(DispatchTarget::Runtime(tool));
+        }
+        if let Some(tool) = self
             .plugin_tools
             .iter()
             .find(|tool| tool.definition().name == name)
-            .ok_or_else(|| format!("unsupported tool: {name}"))?;
-        self.enforce(name, input)?;
-        tool.execute(input).map_err(|error| error.to_string())
+        {
+            return Ok(DispatchTarget::Plugin(tool));
+        }
+        Err(format!("unsupported tool: {name}"))
+    }
+
+    pub fn execute_with_handlers<SearchHandler, RuntimeHandler>(
+        &self,
+        name: &str,
+        input: &Value,
+        search_handler: SearchHandler,
+        runtime_handler: RuntimeHandler,
+    ) -> Result<String, String>
+    where
+        SearchHandler: FnOnce(&Value) -> Result<String, String>,
+        RuntimeHandler: FnOnce(&RuntimeToolDefinition, &Value) -> Result<String, String>,
+    {
+        match self.resolve_dispatch_target(name)? {
+            DispatchTarget::ToolSearch => {
+                self.enforce(name, input)?;
+                search_handler(input)
+            }
+            DispatchTarget::Builtin => {
+                execute_tool_with_enforcer(self.enforcer.as_ref(), name, input)
+            }
+            DispatchTarget::Runtime(tool) => {
+                self.enforce(name, input)?;
+                runtime_handler(tool, input)
+            }
+            DispatchTarget::Plugin(tool) => {
+                self.enforce(name, input)?;
+                tool.execute(input).map_err(|error| error.to_string())
+            }
+        }
+    }
+
+    /// Execute a built-in or plugin tool directly.
+    ///
+    /// Compatibility note: runtime/MCP tools no longer execute through this
+    /// method. Callers that previously passed runtime tool names here must
+    /// migrate to [`GlobalToolRegistry::execute_with_handlers`] and provide a
+    /// runtime dispatcher.
+    pub fn execute(&self, name: &str, input: &Value) -> Result<String, String> {
+        match self.resolve_dispatch_target(name)? {
+            DispatchTarget::ToolSearch | DispatchTarget::Builtin => {
+                execute_tool_with_enforcer(self.enforcer.as_ref(), name, input)
+            }
+            DispatchTarget::Runtime(_) => Err(format!(
+                "runtime tool `{name}` requires a runtime dispatcher; compatibility note: call GlobalToolRegistry::execute_with_handlers for runtime/MCP tools"
+            )),
+            DispatchTarget::Plugin(tool) => {
+                self.enforce(name, input)?;
+                tool.execute(input).map_err(|error| error.to_string())
+            }
+        }
     }
 
     fn searchable_tool_specs(&self) -> Vec<SearchableToolSpec> {
@@ -1156,6 +1217,7 @@ pub fn enforce_permission_check(
 
     match result {
         EnforcementResult::Allowed => Ok(()),
+        EnforcementResult::NeedsConfirmation { reason, .. } => Err(reason),
         EnforcementResult::Denied { reason, .. } => Err(reason),
     }
 }
@@ -5337,6 +5399,104 @@ mod tests {
             output["mcp_degraded"]["failed_servers"][0]["phase"],
             "tool_discovery"
         );
+    }
+
+    #[test]
+    fn execute_with_handlers_routes_tool_search_through_registry_dispatch() {
+        let registry = GlobalToolRegistry::builtin();
+        let mut search_called = false;
+
+        let output = registry
+            .execute_with_handlers(
+                "ToolSearch",
+                &json!({"query": "agent"}),
+                |_| {
+                    search_called = true;
+                    Ok("{\"source\":\"search\"}".to_string())
+                },
+                |_, _| panic!("runtime handler should not run for ToolSearch"),
+            )
+            .expect("ToolSearch should dispatch through the search handler");
+
+        assert!(search_called);
+        assert_eq!(output, "{\"source\":\"search\"}");
+    }
+
+    #[test]
+    fn execute_with_handlers_routes_runtime_tools_through_registry_dispatch() {
+        let registry = GlobalToolRegistry::builtin()
+            .with_runtime_tools(vec![super::RuntimeToolDefinition {
+                name: "mcp__demo__echo".to_string(),
+                description: Some("Echo text from the demo MCP server".to_string()),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": { "text": { "type": "string" } },
+                    "additionalProperties": false
+                }),
+                required_permission: runtime::PermissionMode::ReadOnly,
+            }])
+            .expect("runtime tool should register");
+        let mut runtime_called = false;
+
+        let output = registry
+            .execute_with_handlers(
+                "mcp__demo__echo",
+                &json!({"text": "hello"}),
+                |_| panic!("search handler should not run for runtime tools"),
+                |tool, payload| {
+                    runtime_called = true;
+                    assert_eq!(tool.name, "mcp__demo__echo");
+                    assert_eq!(payload["text"], "hello");
+                    Ok("{\"source\":\"runtime\"}".to_string())
+                },
+            )
+            .expect("runtime tool should dispatch through the runtime handler");
+
+        assert!(runtime_called);
+        assert_eq!(output, "{\"source\":\"runtime\"}");
+    }
+
+    #[test]
+    fn execute_with_handlers_enforces_runtime_permissions_before_dispatch() {
+        let registry = GlobalToolRegistry::builtin()
+            .with_runtime_tools(vec![super::RuntimeToolDefinition {
+                name: "mcp__demo__write".to_string(),
+                description: Some("Write-capable runtime fixture".to_string()),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": { "text": { "type": "string" } },
+                    "additionalProperties": false
+                }),
+                required_permission: runtime::PermissionMode::WorkspaceWrite,
+            }])
+            .expect("runtime tool should register");
+        let policy = registry
+            .permission_specs(None)
+            .expect("runtime permissions should resolve")
+            .into_iter()
+            .fold(
+                PermissionPolicy::new(runtime::PermissionMode::ReadOnly),
+                |policy, (name, required_permission)| {
+                    policy.with_tool_requirement(name, required_permission)
+                },
+            );
+        let registry = registry.with_enforcer(PermissionEnforcer::new(policy));
+        let mut runtime_called = false;
+
+        let error = registry
+            .execute_with_handlers(
+                "mcp__demo__write",
+                &json!({"text": "blocked"}),
+                |_| panic!("search handler should not run for runtime tools"),
+                |_, _| {
+                    runtime_called = true;
+                    Ok("{\"source\":\"runtime\"}".to_string())
+                },
+            )
+            .expect_err("runtime tool should be denied before dispatch");
+
+        assert!(!runtime_called);
+        assert!(error.contains("requires workspace-write permission"));
     }
 
     #[test]

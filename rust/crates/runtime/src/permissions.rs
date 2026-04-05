@@ -232,8 +232,7 @@ impl PermissionPolicy {
                     );
                 }
                 if allow_rule.is_some()
-                    || current_mode == PermissionMode::Allow
-                    || current_mode >= required_mode
+                    || Self::mode_allows_without_prompt(current_mode, required_mode)
                 {
                     return PermissionOutcome::Allow;
                 }
@@ -256,10 +255,7 @@ impl PermissionPolicy {
             );
         }
 
-        if allow_rule.is_some()
-            || current_mode == PermissionMode::Allow
-            || current_mode >= required_mode
-        {
+        if allow_rule.is_some() || Self::mode_allows_without_prompt(current_mode, required_mode) {
             return PermissionOutcome::Allow;
         }
 
@@ -267,11 +263,7 @@ impl PermissionPolicy {
             || (current_mode == PermissionMode::WorkspaceWrite
                 && required_mode == PermissionMode::DangerFullAccess)
         {
-            let reason = Some(format!(
-                "tool '{tool_name}' requires approval to escalate from {} to {}",
-                current_mode.as_str(),
-                required_mode.as_str()
-            ));
+            let reason = Some(Self::prompt_reason(tool_name, current_mode, required_mode));
             return Self::prompt_or_deny(
                 tool_name,
                 input,
@@ -288,6 +280,33 @@ impl PermissionPolicy {
                 required_mode.as_str(),
                 current_mode.as_str()
             ),
+        }
+    }
+
+    fn mode_allows_without_prompt(
+        current_mode: PermissionMode,
+        required_mode: PermissionMode,
+    ) -> bool {
+        current_mode == PermissionMode::Allow
+            || (current_mode != PermissionMode::Prompt && current_mode >= required_mode)
+    }
+
+    fn prompt_reason(
+        tool_name: &str,
+        current_mode: PermissionMode,
+        required_mode: PermissionMode,
+    ) -> String {
+        if current_mode == PermissionMode::Prompt {
+            format!(
+                "tool '{tool_name}' requires explicit confirmation while mode is prompt (required permission: {})",
+                required_mode.as_str()
+            )
+        } else {
+            format!(
+                "tool '{tool_name}' requires approval to escalate from {} to {}",
+                current_mode.as_str(),
+                required_mode.as_str()
+            )
         }
     }
 
@@ -523,6 +542,22 @@ mod tests {
         assert!(matches!(
             policy.authorize("bash", "{}", None),
             PermissionOutcome::Deny { reason } if reason.contains("requires danger-full-access permission")
+        ));
+    }
+
+    #[test]
+    fn prompt_mode_requires_confirmation_without_prompter() {
+        let policy = PermissionPolicy::new(PermissionMode::Prompt)
+            .with_tool_requirement("read_file", PermissionMode::ReadOnly)
+            .with_tool_requirement("write_file", PermissionMode::WorkspaceWrite);
+
+        assert!(matches!(
+            policy.authorize("read_file", "{}", None),
+            PermissionOutcome::Deny { reason } if reason.contains("requires explicit confirmation while mode is prompt")
+        ));
+        assert!(matches!(
+            policy.authorize("write_file", "{}", None),
+            PermissionOutcome::Deny { reason } if reason.contains("requires explicit confirmation while mode is prompt")
         ));
     }
 

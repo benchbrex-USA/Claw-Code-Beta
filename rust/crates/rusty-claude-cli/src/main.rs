@@ -5348,8 +5348,8 @@ impl CliToolExecutor {
         }
     }
 
-    fn execute_search_tool(&self, value: serde_json::Value) -> Result<String, ToolError> {
-        let input: ToolSearchRequest = serde_json::from_value(value)
+    fn execute_search_tool(&self, value: &serde_json::Value) -> Result<String, ToolError> {
+        let input: ToolSearchRequest = serde_json::from_value(value.clone())
             .map_err(|error| ToolError::new(format!("invalid tool input JSON: {error}")))?;
         let (pending_mcp_servers, mcp_degraded) =
             self.mcp_state.as_ref().map_or((None, None), |state| {
@@ -5370,7 +5370,7 @@ impl CliToolExecutor {
     fn execute_runtime_tool(
         &self,
         tool_name: &str,
-        value: serde_json::Value,
+        value: &serde_json::Value,
     ) -> Result<String, ToolError> {
         let Some(mcp_state) = &self.mcp_state else {
             return Err(ToolError::new(format!(
@@ -5383,7 +5383,7 @@ impl CliToolExecutor {
 
         match tool_name {
             "MCPTool" => {
-                let input: McpToolRequest = serde_json::from_value(value)
+                let input: McpToolRequest = serde_json::from_value(value.clone())
                     .map_err(|error| ToolError::new(format!("invalid tool input JSON: {error}")))?;
                 let qualified_name = input
                     .qualified_name
@@ -5392,7 +5392,7 @@ impl CliToolExecutor {
                 mcp_state.call_tool(&qualified_name, input.arguments)
             }
             "ListMcpResourcesTool" => {
-                let input: ListMcpResourcesRequest = serde_json::from_value(value)
+                let input: ListMcpResourcesRequest = serde_json::from_value(value.clone())
                     .map_err(|error| ToolError::new(format!("invalid tool input JSON: {error}")))?;
                 match input.server {
                     Some(server_name) => mcp_state.list_resources_for_server(&server_name),
@@ -5400,11 +5400,11 @@ impl CliToolExecutor {
                 }
             }
             "ReadMcpResourceTool" => {
-                let input: ReadMcpResourceRequest = serde_json::from_value(value)
+                let input: ReadMcpResourceRequest = serde_json::from_value(value.clone())
                     .map_err(|error| ToolError::new(format!("invalid tool input JSON: {error}")))?;
                 mcp_state.read_resource(&input.server, &input.uri)
             }
-            _ => mcp_state.call_tool(tool_name, Some(value)),
+            _ => mcp_state.call_tool(tool_name, Some(value.clone())),
         }
     }
 }
@@ -5422,21 +5422,27 @@ impl ToolExecutor for CliToolExecutor {
         }
         let value = serde_json::from_str(input)
             .map_err(|error| ToolError::new(format!("invalid tool input JSON: {error}")))?;
-        let result = if tool_name == "ToolSearch" {
-            self.tool_registry
-                .enforce(tool_name, &value)
-                .map_err(ToolError::new)?;
-            self.execute_search_tool(value)
-        } else if self.tool_registry.has_runtime_tool(tool_name) {
-            self.tool_registry
-                .enforce(tool_name, &value)
-                .map_err(ToolError::new)?;
-            self.execute_runtime_tool(tool_name, value)
-        } else {
-            self.tool_registry
-                .execute(tool_name, &value)
-                .map_err(ToolError::new)
-        };
+        // Runtime/MCP tools and ToolSearch must go through the registry's
+        // handler-based dispatcher so permission enforcement runs before the
+        // runtime/search branch executes. Compatibility note: callers that used
+        // `GlobalToolRegistry::execute` for runtime tools must migrate to
+        // `execute_with_handlers`; `execute` now covers built-ins and plugin
+        // tools only.
+        let result = self
+            .tool_registry
+            .execute_with_handlers(
+                tool_name,
+                &value,
+                |tool_input| {
+                    self.execute_search_tool(tool_input)
+                        .map_err(|error| error.to_string())
+                },
+                |runtime_tool, tool_input| {
+                    self.execute_runtime_tool(&runtime_tool.name, tool_input)
+                        .map_err(|error| error.to_string())
+                },
+            )
+            .map_err(ToolError::new);
         match result {
             Ok(output) => {
                 if self.emit_output {

@@ -28,7 +28,10 @@ fn is_binary_file(path: &Path) -> io::Result<bool> {
 /// Validate that a resolved path stays within the given workspace root.
 /// Returns the canonical path on success, or an error if the path escapes
 /// the workspace boundary (e.g. via `../` traversal or symlink).
-fn validate_workspace_boundary(resolved: &Path, workspace_root: &Path) -> io::Result<()> {
+pub(crate) fn validate_workspace_boundary(
+    resolved: &Path,
+    workspace_root: &Path,
+) -> io::Result<()> {
     if !resolved.starts_with(workspace_root) {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -42,14 +45,14 @@ fn validate_workspace_boundary(resolved: &Path, workspace_root: &Path) -> io::Re
     Ok(())
 }
 
-fn canonical_workspace_root(workspace_root: &Path) -> PathBuf {
+pub(crate) fn canonical_workspace_root(workspace_root: &Path) -> PathBuf {
     workspace_root
         .canonicalize()
         .unwrap_or_else(|_| workspace_root.to_path_buf())
 }
 
-fn absolute_path(path: &str) -> io::Result<PathBuf> {
-    let candidate = Path::new(path);
+fn absolute_path(path: impl AsRef<Path>) -> io::Result<PathBuf> {
+    let candidate = path.as_ref();
     if candidate.is_absolute() {
         Ok(candidate.to_path_buf())
     } else {
@@ -601,11 +604,11 @@ fn make_patch(original: &str, updated: &str) -> Vec<StructuredPatchHunk> {
     }]
 }
 
-fn normalize_path(path: &str) -> io::Result<PathBuf> {
+pub(crate) fn normalize_path(path: impl AsRef<Path>) -> io::Result<PathBuf> {
     absolute_path(path)?.canonicalize()
 }
 
-fn normalize_path_allow_missing(path: &str) -> io::Result<PathBuf> {
+pub(crate) fn normalize_path_allow_missing(path: impl AsRef<Path>) -> io::Result<PathBuf> {
     normalize_missing_path(&absolute_path(path)?)
 }
 
