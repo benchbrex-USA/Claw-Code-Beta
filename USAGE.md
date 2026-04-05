@@ -1,170 +1,100 @@
-# Claw Code Usage
+# Usage
 
-This guide covers the current Rust workspace under `rust/` and the `claw` CLI binary.
+This guide covers the current Rust workspace and the `claw` CLI binary.
 
-## Prerequisites
-
-- Rust toolchain with `cargo`
-- One of:
-  - `ANTHROPIC_API_KEY` for direct API access
-  - `claw login` for OAuth-based auth
-- Optional: `ANTHROPIC_BASE_URL` when targeting a proxy or local service
-
-## Build the workspace
+## Build
 
 ```bash
 cd rust
 cargo build --workspace
 ```
 
-The CLI binary is available at `rust/target/debug/claw` after a debug build.
-
-## Quick start
-
-### Interactive REPL
-
-```bash
-cd rust
-./target/debug/claw
-```
-
-### One-shot prompt
-
-```bash
-cd rust
-./target/debug/claw prompt "summarize this repository"
-```
-
-### Shorthand prompt mode
-
-```bash
-cd rust
-./target/debug/claw "explain rust/crates/runtime/src/lib.rs"
-```
-
-### JSON output for scripting
-
-```bash
-cd rust
-./target/debug/claw --output-format json prompt "status"
-```
-
-## Model and permission controls
-
-```bash
-cd rust
-./target/debug/claw --model sonnet prompt "review this diff"
-./target/debug/claw --permission-mode read-only prompt "summarize Cargo.toml"
-./target/debug/claw --permission-mode workspace-write prompt "update README.md"
-./target/debug/claw --allowedTools read,glob "inspect the runtime crate"
-```
-
-Supported permission modes:
-
-- `read-only`
-- `workspace-write`
-- `danger-full-access`
-
-Permission model notes:
-
-- Built-in tools and plugin tools share a centralized enforcement path derived from each tool's declared required permission.
-- The CLI applies that same policy before dispatching `ToolSearch` and dynamically registered runtime/MCP tools.
-- In `workspace-write` mode, `write_file`, `edit_file`, and notebook mutations are bounded to the active workspace. Paths that resolve outside the workspace root are denied, even when they are absolute or the target does not exist yet.
-
-Model aliases currently supported by the CLI:
-
-- `opus` → `claude-opus-4-6`
-- `sonnet` → `claude-sonnet-4-6`
-- `haiku` → `claude-haiku-4-5-20251213`
+The debug binary is `rust/target/debug/claw`.
 
 ## Authentication
 
-### API key
+Use either an API key or OAuth:
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
+export ANTHROPIC_BASE_URL="https://your-proxy.example" # optional
+
+cd rust
+cargo run -p rusty-claude-cli -- login
 ```
 
-### OAuth
+OAuth credentials are stored in `$CLAW_CONFIG_HOME/credentials.json` or `~/.claw/credentials.json`.
+
+## Run The CLI
+
+Build from `rust/`, then run `claw` from the directory you want treated as the active workspace.
 
 ```bash
-cd rust
-./target/debug/claw login
-./target/debug/claw logout
+# whole-repo workspace
+cd "/Volumes/Project/Claw Code beta"
+./rust/target/debug/claw
+
+# Rust-only workspace
+cd "/Volumes/Project/Claw Code beta/rust"
+./target/debug/claw
 ```
 
-## Common operational commands
+Common commands:
 
 ```bash
-cd rust
-./target/debug/claw status
-./target/debug/claw sandbox
-./target/debug/claw agents
-./target/debug/claw mcp
-./target/debug/claw skills
-./target/debug/claw system-prompt --cwd .. --date 2026-04-04
+./rust/target/debug/claw prompt "summarize this repository"
+./rust/target/debug/claw --output-format json prompt "status"
+./rust/target/debug/claw status
+./rust/target/debug/claw sandbox
+./rust/target/debug/claw mcp
+./rust/target/debug/claw skills
+./rust/target/debug/claw --resume latest
 ```
 
-## Session management
+## Permission Modes
 
-REPL turns are persisted under `.claw/sessions/` in the current workspace.
+- `read-only`: inspection only. Mutating tool calls are denied.
+- `workspace-write`: local reads and writes are allowed only inside the active workspace root.
+- `danger-full-access`: unrestricted local mutation.
+
+Examples:
 
 ```bash
-cd rust
-./target/debug/claw --resume latest
-./target/debug/claw --resume latest /status /diff
+./rust/target/debug/claw --permission-mode read-only prompt "find TODOs in rust/crates/runtime"
+./rust/target/debug/claw --permission-mode workspace-write prompt "update README.md"
+./rust/target/debug/claw --permission-mode danger-full-access prompt "run the full release script"
+./rust/target/debug/claw --allowedTools read,glob,grep prompt "inspect the runtime crate"
 ```
 
-Useful interactive commands include `/help`, `/status`, `/cost`, `/config`, `/session`, `/model`, `/permissions`, and `/export`.
+## How Workspace-Write Works
 
-## Config file resolution order
+- The active workspace is the directory where you launch `claw`.
+- Local file and notebook tools normalize paths against that root.
+- Absolute paths, `..` traversal, missing-target escapes, and symlink escapes are denied when they resolve outside the workspace.
+- Bash can stay at `workspace-write` only when the active sandbox configuration is actually enforcing filesystem isolation. Otherwise the runtime treats the command as `danger-full-access`.
 
-Runtime config is loaded in this order, with later entries overriding earlier ones:
+## Approval Prompts
 
-1. `~/.claw.json`
-2. `~/.config/claw/settings.json`
-3. `<repo>/.claw.json`
-4. `<repo>/.claw/settings.json`
-5. `<repo>/.claw/settings.local.json`
+The stock CLI exposes three modes, but the runtime also has an internal approval path. The same prompt is used when a `workspace-write` session needs to escalate a tool call to `danger-full-access`.
 
-## Mock parity harness
+When approval is required, the CLI prints:
 
-The workspace includes a deterministic Anthropic-compatible mock service and parity harness.
-
-```bash
-cd rust
-./scripts/run_mock_parity_harness.sh
+```text
+Permission approval required
+  Tool             ...
+  Current mode     ...
+  Required mode    ...
+  Reason           ...
+  Input            ...
+Approve this tool call? [y/N]:
 ```
 
-Manual mock service startup:
-
-```bash
-cd rust
-cargo run -p mock-anthropic-service -- --bind 127.0.0.1:0
-```
+Type `y` or `yes` to approve. Any other response denies the tool call.
 
 ## Verification
-
-The current verification baseline for runtime, tool, and CLI changes is:
 
 ```bash
 cd rust
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
-
-The runtime and tools test suites now use hardened temp-dir helpers for config and workspace fixtures, so the full-workspace run remains stable under parallel execution.
-
-## Workspace overview
-
-Current Rust crates:
-
-- `api`
-- `commands`
-- `compat-harness`
-- `mock-anthropic-service`
-- `plugins`
-- `runtime`
-- `rusty-claude-cli`
-- `telemetry`
-- `tools`
