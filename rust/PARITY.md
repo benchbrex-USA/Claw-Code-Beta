@@ -1,6 +1,6 @@
 # Parity Status — claw-code Rust Port
 
-Last updated: 2026-04-03
+Last updated: 2026-04-05
 
 ## Mock parity harness — milestone 1
 
@@ -26,6 +26,14 @@ Canonical scenario map: `rust/mock_parity_scenarios.json`
 - Plugin tool execution path
 - File tools — harness-validated flows
 
+## Post-checkpoint hardening — 2026-04-05
+
+- Current local snapshot HEAD: `5a6b3b4` (`feat: centralized enforcement, workspace-safe file ops, full clippy cleanup`).
+- Built-ins, plugin tools, `ToolSearch`, and runtime/MCP tool definitions now share one permission policy surface.
+- `write_file`, `edit_file`, and notebook mutations route through workspace-safe helpers.
+- Runtime and tool fixtures use hardened temp-dir helpers so `cargo test --workspace` remains stable under full-suite execution.
+- The verification baseline is `cargo clippy --all-targets --all-features -- -D warnings` plus `cargo test --workspace`.
+
 ## Completed Behavioral Parity Work
 
 Hashes below come from `git log --oneline`. Merge line counts come from `git show --stat <merge>`.
@@ -50,8 +58,8 @@ Hashes below come from `git log --oneline`. Merge line counts come from `git sho
 |------|-----------|-----------------|
 | **bash** | `runtime::bash` 283 LOC | subprocess exec, timeout, background, sandbox — **strong parity**. 9/9 requested validation submodules are now tracked as complete via `36dac6c`, with on-main sandbox + permission enforcement runtime support |
 | **read_file** | `runtime::file_ops` | offset/limit read — **good parity** |
-| **write_file** | `runtime::file_ops` | file create/overwrite — **good parity** |
-| **edit_file** | `runtime::file_ops` | old/new string replacement — **good parity**. Missing: replace_all was recently added |
+| **write_file** | `runtime::file_ops` | file create/overwrite via workspace-safe helper — **good parity** |
+| **edit_file** | `runtime::file_ops` | old/new string replacement via workspace-safe helper — **good parity** |
 | **glob_search** | `runtime::file_ops` | glob pattern matching — **good parity** |
 | **grep_search** | `runtime::file_ops` | ripgrep-style search — **good parity** |
 | **WebFetch** | `tools` | URL fetch + content extraction — **moderate parity** (need to verify content truncation, redirect handling vs upstream) |
@@ -74,8 +82,8 @@ Hashes below come from `git log --oneline`. Merge line counts come from `git sho
 | **ListMcpResources** | `runtime::mcp_tool_bridge` + `tools` | connected-server resource listing — **good parity** |
 | **ReadMcpResource** | `runtime::mcp_tool_bridge` + `tools` | connected-server resource reads — **good parity** |
 | **MCP** | `runtime::mcp_tool_bridge` + `tools` | stateful MCP tool invocation bridge — **good parity** |
-| **ToolSearch** | `tools` | tool discovery — **good parity** |
-| **NotebookEdit** | `tools` | jupyter notebook cell editing — **moderate parity** |
+| **ToolSearch** | `tools` | tool discovery — **good parity**; CLI now enforces permission policy before dispatch |
+| **NotebookEdit** | `tools` | jupyter notebook cell editing bounded to the active workspace — **good parity** |
 | **Sleep** | `tools` | delay execution — **good parity** |
 | **SendUserMessage/Brief** | `tools` | user-facing message — **good parity** |
 | **Config** | `tools` | config inspection — **moderate parity** |
@@ -120,25 +128,26 @@ Harness note: milestone 2 validates bash success plus workspace-write escalation
 - [x] Size limits on read/write
 - [x] Binary file detection
 - [x] Permission mode enforcement (read-only vs workspace-write)
+- [x] Workspace-bounded write/edit/notebook mutation paths
 
-Harness note: read_file, grep_search, write_file allow/deny, and multi-tool same-turn assembly are now covered by the mock parity harness; file edge cases + permission enforcement landed in `a98f2b6` and `336f820`.
+Harness note: read_file, grep_search, write_file allow/deny, and multi-tool same-turn assembly are now covered by the mock parity harness; live write/edit/notebook mutation paths now route through workspace-safe helpers.
 
 **Config/Plugin/MCP flows:**
 - [x] Full MCP server lifecycle (connect, list tools, call tool, disconnect)
 - [ ] Plugin install/enable/disable/uninstall full flow
 - [ ] Config merge precedence (user > project > local)
 
-Harness note: external plugin discovery + execution is now covered via `plugin_tool_roundtrip`; MCP lifecycle landed in `cc0f92e`, while plugin lifecycle + config merge precedence remain open.
+Harness note: external plugin discovery + execution is now covered via `plugin_tool_roundtrip`, and the live runtime now applies centralized permission enforcement to built-ins, plugin tools, `ToolSearch`, and runtime/MCP dispatch.
 
 ## Runtime Behavioral Gaps
 
-- [x] Permission enforcement across all tools (read-only, workspace-write, danger-full-access)
+- [x] Permission enforcement across built-ins, plugin tools, `ToolSearch`, and runtime/MCP dispatch
 - [ ] Output truncation (large stdout/file content)
 - [ ] Session compaction behavior matching
 - [ ] Token counting / cost tracking accuracy
 - [x] Streaming response support validated by the mock parity harness
 
-Harness note: current coverage now includes write-file denial, bash escalation approve/deny, and plugin workspace-write execution paths; permission enforcement landed in `336f820`.
+Harness note: current coverage now includes write-file denial, bash escalation approve/deny, and plugin workspace-write execution paths; the current local snapshot also hardens the shared enforcement path and workspace-bounded mutation helpers.
 
 ## Migration Readiness
 

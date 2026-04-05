@@ -1,14 +1,21 @@
 # Parity Status — claw-code Rust Port
 
-Last updated: 2026-04-03
+Last updated: 2026-04-05
 
 ## Summary
 
 - Canonical document: this top-level `PARITY.md` is the file consumed by `rust/scripts/run_mock_parity_diff.py`.
 - Requested 9-lane checkpoint: **All 9 lanes merged on `main`.**
-- Current `main` HEAD: `ee31e00` (stub implementations replaced with real AskUserQuestion + RemoteTrigger).
-- Repository stats at this checkpoint: **292 commits on `main` / 293 across all branches**, **9 crates**, **48,599 tracked Rust LOC**, **2,568 test LOC**, **3 authors**, date range **2026-03-31 → 2026-04-03**.
+- Current local snapshot HEAD: `5a6b3b4` (`feat: centralized enforcement, workspace-safe file ops, full clippy cleanup`).
+- Post-checkpoint hardening in this snapshot: centralized permission enforcement across built-ins, plugin tools, `ToolSearch`, and runtime/MCP dispatch; workspace-bounded write/edit/notebook mutations; hardened temp-dir helpers for clean full-workspace verification.
 - Mock parity harness stats: **10 scripted scenarios**, **19 captured `/v1/messages` requests** in `rust/crates/rusty-claude-cli/tests/mock_parity_harness.rs`.
+
+## Post-checkpoint hardening — 2026-04-05
+
+- Built-ins and plugin tools now execute under one permission policy surface instead of partially separate enforcement paths.
+- The CLI applies that same policy before dispatching `ToolSearch` and runtime/MCP tool definitions such as `MCPTool`, `ListMcpResourcesTool`, and `ReadMcpResourceTool`.
+- `write_file`, `edit_file`, and notebook mutations now route through workspace-safe helpers, so `workspace-write` mode cannot mutate paths outside the active workspace.
+- The verification baseline for these surfaces is `cargo clippy --all-targets --all-features -- -D warnings` plus `cargo test --workspace`.
 
 ## Mock parity harness — milestone 1
 
@@ -55,14 +62,14 @@ Canonical scenario map: `rust/mock_parity_scenarios.json`
 
 - **Status:** merged on `main`.
 - **Feature commit:** `36dac6c` — `feat: add bash validation submodules — readOnlyValidation, destructiveCommandWarning, modeValidation, sedValidation, pathValidation, commandSemantics`
-- **Evidence:** branch-only diff adds `rust/crates/runtime/src/bash_validation.rs` and a `runtime::lib` export (`+1005` across 2 files).
-- **Main-branch reality:** `rust/crates/runtime/src/bash.rs` is still the active on-`main` implementation at **283 LOC**, with timeout/background/sandbox execution. `PermissionEnforcer::check_bash()` adds read-only gating on `main`, but the dedicated validation module is not landed.
+- **Evidence:** `rust/crates/runtime/src/bash_validation.rs` is present in-tree and exported from `runtime::lib`.
+- **Main-branch reality:** `rust/crates/runtime/src/bash.rs` remains the active executor, while `bash_validation.rs` carries the expanded validation helpers alongside permission gating.
 
-### Bash tool — upstream has 18 submodules, Rust has 1:
+### Bash tool — active execution remains centralized:
 
-- On `main`, this statement is still materially true.
-- Harness coverage proves bash execution and prompt escalation flows, but not the full upstream validation matrix.
-- The branch-only lane targets `readOnlyValidation`, `destructiveCommandWarning`, `modeValidation`, `sedValidation`, `pathValidation`, and `commandSemantics`.
+- The active runtime still centers execution in `rust/crates/runtime/src/bash.rs`.
+- Validation helpers now live alongside it in `rust/crates/runtime/src/bash_validation.rs`.
+- Harness coverage proves bash execution and prompt escalation flows, but not every upstream behavioral nuance.
 
 ### Lane 2 — CI fix
 
@@ -77,7 +84,7 @@ Canonical scenario map: `rust/mock_parity_scenarios.json`
 - **Status:** merged on `main`.
 - **Feature commit:** `284163b` — `feat(file_ops): add edge-case guards — binary detection, size limits, workspace boundary, symlink escape`
 - **Merge commit:** `a98f2b6` — `Merge jobdori/file-tool-edge-cases: binary detection, size limits, workspace boundary guards`
-- **Evidence:** `rust/crates/runtime/src/file_ops.rs` is **744 LOC** and now includes `MAX_READ_SIZE`, `MAX_WRITE_SIZE`, NUL-byte binary detection, and canonical workspace-boundary validation.
+- **Evidence:** `rust/crates/runtime/src/file_ops.rs` is **744 LOC** and now includes `MAX_READ_SIZE`, `MAX_WRITE_SIZE`, NUL-byte binary detection, canonical workspace-boundary validation, and workspace-safe write/edit helpers.
 - **Harness coverage:** `read_file_roundtrip`, `grep_chunk_assembly`, `write_file_allowed`, and `write_file_denied` are in the manifest and exercised by the clean-env harness.
 
 ### File tools — harness-validated flows
@@ -85,6 +92,7 @@ Canonical scenario map: `rust/mock_parity_scenarios.json`
 - `read_file_roundtrip` checks read-path execution and final synthesis.
 - `grep_chunk_assembly` checks chunked grep tool output handling.
 - `write_file_allowed` and `write_file_denied` validate both write success and permission denial.
+- Live mutation paths now use workspace-safe helpers for `write_file`, `edit_file`, and notebook edits.
 
 ### Lane 4 — TaskRegistry
 
@@ -134,12 +142,14 @@ Canonical scenario map: `rust/mock_parity_scenarios.json`
 - **Feature commit:** `66283f4` — `feat(runtime+tools): PermissionEnforcer — permission mode enforcement layer`
 - **Merge commit:** `336f820` — `Merge jobdori/permission-enforcement: PermissionEnforcer with workspace + bash enforcement`
 - **Evidence:** `rust/crates/runtime/src/permission_enforcer.rs` is **340 LOC** and adds tool gating, file write boundary checks, and bash read-only heuristics on top of `rust/crates/runtime/src/permissions.rs`.
-- **Wiring:** `rust/crates/tools/src/lib.rs` exposes `enforce_permission_check()` and carries per-tool `required_permission` values in tool specs.
+- **Wiring:** `rust/crates/tools/src/lib.rs` materializes a single permission surface for built-ins and plugin tools, and `rust/crates/rusty-claude-cli/src/main.rs` applies that same policy before `ToolSearch` and runtime/MCP dispatch.
 
 ### Permission enforcement across tool paths
 
-- Harness scenarios validate `write_file_denied`, `bash_permission_prompt_approved`, and `bash_permission_prompt_denied`.
+- Harness scenarios validate `write_file_denied`, `bash_permission_prompt_approved`, `bash_permission_prompt_denied`, and `plugin_tool_roundtrip`.
 - `PermissionEnforcer::check()` delegates to `PermissionPolicy::authorize()` and returns structured allow/deny results.
+- Built-ins, plugin tools, `ToolSearch`, and runtime/MCP tool definitions now resolve through the same policy surface before execution.
+- Workspace-safe write/edit helpers and notebook mutation paths deny escapes from the active workspace.
 - `check_file_write()` enforces workspace boundaries and read-only denial; `check_bash()` denies mutating commands in read-only mode and blocks prompt-mode bash without confirmation.
 
 ## Tool Surface: 40 exposed tool specs on `main`
@@ -156,14 +166,14 @@ Canonical scenario map: `rust/mock_parity_scenarios.json`
 - `RemoteTrigger` remains a stub response.
 - `TestingPermission` remains test-only.
 - Task, team, cron, MCP, and LSP are no longer just fixed-payload stubs in `execute_tool()`, but several remain registry-backed approximations rather than full external-runtime integrations.
-- Bash deep validation remains branch-only until `36dac6c` is merged.
+- Bash execution still centers on one runtime entrypoint even though validation helpers are now present in-tree.
 
 ## Reconciled from the older PARITY checklist
 
 - [x] Path traversal prevention (symlink following, `../` escapes)
 - [x] Size limits on read/write
 - [x] Binary file detection
-- [x] Permission mode enforcement (read-only vs workspace-write)
+- [x] Permission mode enforcement across built-ins, plugin tools, `ToolSearch`, and runtime/MCP dispatch
 - [x] Config merge precedence (user > project > local) — `ConfigLoader::discover()` loads user → project → local, and `loads_and_merges_claude_code_config_files_by_precedence()` verifies the merge order.
 - [x] Plugin install/enable/disable/uninstall flow — `/plugin` slash handling in `rust/crates/commands/src/lib.rs` delegates to `PluginManager::{install, enable, disable, uninstall}` in `rust/crates/plugins/src/lib.rs`.
 - [x] No `#[ignore]` tests hiding failures — `grep` over `rust/**/*.rs` found 0 ignored tests.
@@ -181,7 +191,7 @@ Canonical scenario map: `rust/mock_parity_scenarios.json`
 
 - [x] `PARITY.md` maintained and honest
 - [x] 9 requested lanes documented with commit hashes and current status
-- [x] All 9 requested lanes landed on `main` (`bash-validation` is still branch-only)
+- [x] The current local snapshot documents the 9-lane checkpoint plus the post-checkpoint hardening landed at `5a6b3b4`
 - [x] No `#[ignore]` tests hiding failures
 - [ ] CI green on every commit
 - [x] Codebase shape clean enough for handoff documentation

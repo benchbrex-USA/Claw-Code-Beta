@@ -23,6 +23,8 @@ The harness runs these scripted scenarios against a fresh workspace and isolated
 9. `bash_permission_prompt_denied`
 10. `plugin_tool_roundtrip`
 
+These scenarios now exercise the tightened live runtime path: built-ins, plugin tools, `ToolSearch`, and runtime/MCP tool definitions share centralized permission enforcement, while write/edit mutations stay bounded to the harness workspace.
+
 ## Run
 
 ```bash

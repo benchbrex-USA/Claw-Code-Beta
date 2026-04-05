@@ -57,94 +57,89 @@ https://x.com/realsigridjin/status/2039472968624185713
 
 ---
 
-## Porting Status
+## Implementation Status
 
-The main source tree is now Python-first.
+The active implementation is the Rust workspace under [`rust/`](./rust).
 
-- `src/` contains the active Python porting workspace
-- `tests/` verifies the current Python workspace
-- the exposed snapshot is no longer part of the tracked repository state
+- `rust/` contains the maintained `claw` CLI, runtime, tool registry, mock parity harness, and verification surface.
+- `src/` and `tests/` remain in the repository as reference and validation surfaces that should stay aligned with the documented behavior.
+- [`USAGE.md`](./USAGE.md) is the best starting point for build, auth, CLI, session, and parity-harness workflows.
 
-The current Python workspace is not yet a complete one-to-one replacement for the original system, but the primary implementation surface is now Python.
+## Recent Hardening
 
-## Why this rewrite exists
+The current patch set tightened the live runtime in four places:
 
-I originally studied the exposed codebase to understand its harness, tool wiring, and agent workflow. After spending more time with the legal and ethical questions—and after reading the essay linked below—I did not want the exposed snapshot itself to remain the main tracked source tree.
-
-This repository now focuses on Python porting work instead.
+- **Centralized permission enforcement** across built-ins and plugin tools, using one policy surface derived from each tool's declared required permission.
+- **Workspace-bounded file mutation** for `write_file`, `edit_file`, and notebook edits, so `workspace-write` mode cannot mutate paths outside the active workspace.
+- **CLI dispatch enforcement** for `ToolSearch` and dynamically registered runtime/MCP tools before those branches execute.
+- **Temp-dir hardening** for config and tool fixtures so full-workspace verification stays stable under parallel execution.
 
 ## Repository Layout
 
 ```text
 .
-├── src/                                # Python porting workspace
-│   ├── __init__.py
-│   ├── commands.py
-│   ├── main.py
-│   ├── models.py
-│   ├── port_manifest.py
-│   ├── query_engine.py
-│   ├── task.py
-│   └── tools.py
-├── tests/                              # Python verification
-├── assets/omx/                         # OmX workflow screenshots
-├── 2026-03-09-is-legal-the-same-as-legitimate-ai-reimplementation-and-the-erosion-of-copyleft.md
+├── rust/                               # Active Rust workspace and `claw` CLI
+│   ├── Cargo.toml
+│   ├── README.md
+│   ├── USAGE.md
+│   ├── PARITY.md
+│   ├── MOCK_PARITY_HARNESS.md
+│   ├── crates/
+│   └── scripts/
+├── src/                                # Reference and compatibility sources kept in-repo
+├── tests/                              # Validation surfaces kept in sync with repo behavior
+├── assets/                             # README and workflow assets
+├── PHILOSOPHY.md
+├── ROADMAP.md
+├── USAGE.md
+├── PARITY.md
 └── README.md
 ```
 
-## Python Workspace Overview
-
-The new Python `src/` tree currently provides:
-
-- **`port_manifest.py`** — summarizes the current Python workspace structure
-- **`models.py`** — dataclasses for subsystems, modules, and backlog state
-- **`commands.py`** — Python-side command port metadata
-- **`tools.py`** — Python-side tool port metadata
-- **`query_engine.py`** — renders a Python porting summary from the active workspace
-- **`main.py`** — a CLI entrypoint for manifest and summary output
-
 ## Quickstart
 
-Render the Python porting summary:
+Build the active Rust workspace:
 
 ```bash
-python3 -m src.main summary
+cd rust
+cargo build --workspace
 ```
 
-Print the current Python workspace manifest:
+Run the interactive CLI:
 
 ```bash
-python3 -m src.main manifest
+cd rust
+./target/debug/claw
 ```
 
-List the current Python modules:
+Run a one-shot prompt:
 
 ```bash
-python3 -m src.main subsystems --limit 16
+cd rust
+./target/debug/claw prompt "summarize this repository"
 ```
 
-Run verification:
+Run the verification sweep:
 
 ```bash
-python3 -m unittest discover -s tests -v
+cd rust
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --workspace
 ```
 
-Run the parity audit against the local ignored archive (when present):
+Run the mock parity harness:
 
 ```bash
-python3 -m src.main parity-audit
+cd rust
+./scripts/run_mock_parity_harness.sh
 ```
 
-Inspect mirrored command/tool inventories:
+## Current Runtime Notes
 
-```bash
-python3 -m src.main commands --limit 10
-python3 -m src.main tools --limit 10
-```
-
-## Current Parity Checkpoint
-
-The port now mirrors the archived root-entry file surface, top-level subsystem names, and command/tool inventories much more closely than before. However, it is **not yet** a full runtime-equivalent replacement for the original TypeScript system; the Python tree still contains fewer executable runtime slices than the archived source.
+- Permission checks now cover built-ins, plugin tools, `ToolSearch`, and runtime/MCP tool definitions consistently.
+- `workspace-write` mode allows mutation only inside the active workspace; absolute paths and missing-target traversal are still rejected when they escape the workspace root.
+- The mock parity harness exercises allow/deny flows for file tools, bash permission prompts, multi-tool turns, and plugin tool roundtrips.
+- The detailed behavior and remaining parity notes live in [`PARITY.md`](./PARITY.md) and [`rust/PARITY.md`](./rust/PARITY.md).
 
 
 ## Built with `oh-my-codex`
@@ -153,7 +148,7 @@ The restructuring and documentation work on this repository was AI-assisted and 
 
 - **`$team` mode:** used for coordinated parallel review and architectural feedback
 - **`$ralph` mode:** used for persistent execution, verification, and completion discipline
-- **Codex-driven workflow:** used to turn the main `src/` tree into a Python-first porting workspace
+- **Codex-driven workflow:** used to harden the Rust workspace, verification surfaces, and documentation around the active CLI/runtime
 
 ### OmX workflow screenshots
 

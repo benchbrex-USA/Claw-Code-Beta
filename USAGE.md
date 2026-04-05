@@ -65,6 +65,12 @@ Supported permission modes:
 - `workspace-write`
 - `danger-full-access`
 
+Permission model notes:
+
+- Built-in tools and plugin tools share a centralized enforcement path derived from each tool's declared required permission.
+- The CLI applies that same policy before dispatching `ToolSearch` and dynamically registered runtime/MCP tools.
+- In `workspace-write` mode, `write_file`, `edit_file`, and notebook mutations are bounded to the active workspace. Paths that resolve outside the workspace root are denied, even when they are absolute or the target does not exist yet.
+
 Model aliases currently supported by the CLI:
 
 - `opus` → `claude-opus-4-6`
@@ -139,10 +145,15 @@ cargo run -p mock-anthropic-service -- --bind 127.0.0.1:0
 
 ## Verification
 
+The current verification baseline for runtime, tool, and CLI changes is:
+
 ```bash
 cd rust
+cargo clippy --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
+
+The runtime and tools test suites now use hardened temp-dir helpers for config and workspace fixtures, so the full-workspace run remains stable under parallel execution.
 
 ## Workspace overview
 

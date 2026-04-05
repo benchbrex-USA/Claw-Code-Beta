@@ -88,8 +88,8 @@ Primary artifacts:
 | Todo tracking | ✅ |
 | Notebook editing | ✅ |
 | CLAUDE.md / project memory | ✅ |
-| Config file hierarchy (.claude.json) | ✅ |
-| Permission system | ✅ |
+| Config file hierarchy | ✅ |
+| Permission enforcement across built-ins, plugins, ToolSearch, runtime/MCP | ✅ |
 | MCP server lifecycle | ✅ |
 | Session persistence + resume | ✅ |
 | Extended thinking (thinking blocks) | ✅ |
@@ -99,8 +99,17 @@ Primary artifacts:
 | Model aliases (opus/sonnet/haiku) | ✅ |
 | Slash commands (/status, /compact, /clear, etc.) | ✅ |
 | Hooks (PreToolUse/PostToolUse) | 🔧 Config only |
-| Plugin system | 📋 Planned |
-| Skills registry | 📋 Planned |
+| Plugin tool loading + permission metadata | ✅ |
+| Skills inspection command | ✅ |
+
+## Permission and Workspace Safety
+
+Recent runtime hardening tightened the live execution path, not just the tool specs:
+
+- Built-in tools and plugin tools now share the same permission policy surface.
+- The CLI enforces that same policy before dispatching `ToolSearch` and runtime/MCP tool definitions such as `MCPTool`, `ListMcpResourcesTool`, and `ReadMcpResourceTool`.
+- `write_file`, `edit_file`, and notebook mutations route through workspace-safe helpers, so `workspace-write` sessions cannot mutate paths outside the active workspace.
+- The verification baseline for these surfaces is `cargo clippy --all-targets --all-features -- -D warnings` plus `cargo test --workspace`.
 
 ## Model Aliases
 
@@ -189,10 +198,10 @@ rust/
 - **compat-harness** — Extracts tool/prompt manifests from upstream TS source
 - **mock-anthropic-service** — Deterministic `/v1/messages` mock for CLI parity tests and local harness runs
 - **plugins** — Plugin metadata, registries, and hook integration surfaces
-- **runtime** — `ConversationRuntime` agentic loop, `ConfigLoader` hierarchy, `Session` persistence, permission policy, MCP client, system prompt assembly, usage tracking
-- **rusty-claude-cli** — REPL, one-shot prompt, streaming display, tool call rendering, CLI argument parsing
+- **runtime** — `ConversationRuntime` agentic loop, `ConfigLoader` hierarchy, `Session` persistence, permission policy, workspace-safe file ops, MCP client, system prompt assembly, usage tracking
+- **rusty-claude-cli** — REPL, one-shot prompt, streaming display, tool call rendering, CLI argument parsing, and enforcement on the `ToolSearch` and runtime/MCP dispatch branches
 - **telemetry** — Session trace events and supporting telemetry payloads
-- **tools** — Tool specs + execution: Bash, ReadFile, WriteFile, EditFile, GlobSearch, GrepSearch, WebSearch, WebFetch, Agent, TodoWrite, NotebookEdit, Skill, ToolSearch, REPL runtimes
+- **tools** — Tool specs, permission metadata, and execution for built-ins and plugin tools: Bash, ReadFile, WriteFile, EditFile, GlobSearch, GrepSearch, WebSearch, WebFetch, Agent, TodoWrite, NotebookEdit, Skill, ToolSearch, REPL runtimes
 
 ## Stats
 
