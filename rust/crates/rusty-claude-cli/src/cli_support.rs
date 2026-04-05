@@ -111,7 +111,9 @@ pub(super) fn render_teleport_report(target: &str) -> Result<String, Box<dyn std
     Ok(lines.join("\n"))
 }
 
-pub(super) fn render_last_tool_debug_report(session: &Session) -> Result<String, Box<dyn std::error::Error>> {
+pub(super) fn render_last_tool_debug_report(
+    session: &Session,
+) -> Result<String, Box<dyn std::error::Error>> {
     let last_tool_use = session
         .messages
         .iter()

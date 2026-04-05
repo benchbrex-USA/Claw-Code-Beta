@@ -1,18 +1,18 @@
-mod init;
-mod input;
-mod render;
 mod auth;
 mod cli_args;
 mod cli_support;
 mod cli_tools;
+mod init;
+mod input;
+mod render;
 mod runtime_build;
 mod session_reports;
 mod session_store;
 mod status_reports;
-mod tool_output;
-mod workspace_status;
 #[cfg(test)]
 mod tests;
+mod tool_output;
+mod workspace_status;
 
 use std::collections::BTreeSet;
 use std::env;
@@ -32,30 +32,29 @@ use api::{
     StreamEvent as ApiStreamEvent, ToolChoice, ToolDefinition, ToolResultContentBlock,
 };
 
+use auth::{run_login, run_logout};
+#[cfg(test)]
+use cli_args::suggest_slash_commands;
+use cli_args::{
+    default_permission_mode, filter_tool_specs, format_unknown_slash_command, parse_args,
+    permission_mode_from_label, resolve_model_alias,
+};
+#[cfg(test)]
+use cli_support::print_help_to;
+use cli_support::{
+    build_system_prompt, convert_messages, format_bughunter_report, format_issue_report,
+    format_pr_report, format_ultraplan_report, git_output, init_claude_md,
+    normalize_permission_mode, permission_policy, print_help, render_diff_report,
+    render_diff_report_for, render_export_text, render_last_tool_debug_report,
+    render_teleport_report, render_version_report, resolve_export_path, run_init, validate_no_args,
+};
+use cli_tools::{CliPermissionPrompter, CliToolExecutor};
 use commands::{
     handle_agents_slash_command, handle_mcp_slash_command, handle_plugins_slash_command,
     handle_skills_slash_command, render_slash_command_help, resume_supported_slash_commands,
     slash_command_specs, SlashCommand,
 };
 use compat_harness::{extract_manifest, UpstreamPaths};
-use auth::{run_login, run_logout};
-use cli_args::{
-    default_permission_mode, filter_tool_specs, format_unknown_slash_command, parse_args,
-    permission_mode_from_label, resolve_model_alias,
-};
-#[cfg(test)]
-use cli_args::suggest_slash_commands;
-use cli_support::{
-    build_system_prompt, convert_messages, format_bughunter_report, format_issue_report,
-    format_pr_report, format_ultraplan_report, git_output, init_claude_md,
-    normalize_permission_mode, permission_policy, print_help, render_diff_report,
-    render_diff_report_for, render_export_text, render_last_tool_debug_report,
-    render_teleport_report, render_version_report, resolve_export_path, run_init,
-    validate_no_args,
-};
-#[cfg(test)]
-use cli_support::print_help_to;
-use cli_tools::{CliPermissionPrompter, CliToolExecutor};
 use init::initialize_repo;
 use plugins::{PluginHooks, PluginManager, PluginManagerConfig, PluginRegistry};
 use render::{MarkdownStreamState, Spinner, TerminalRenderer};
@@ -73,19 +72,23 @@ use runtime_build::{
     collect_prompt_cache_events, collect_tool_results, collect_tool_uses, final_assistant_text,
     slash_command_completion_candidates_with_sessions, BuiltRuntime,
 };
+#[cfg(test)]
+use runtime_build::{
+    build_runtime_with_plugin_state, describe_tool_progress, format_internal_prompt_progress_line,
+    InternalPromptProgressEvent, InternalPromptProgressState, RuntimePluginState,
+};
 use serde_json::json;
+#[cfg(test)]
+use session_reports::format_unknown_slash_command_message;
+use session_reports::{
+    format_auto_compaction_notice, format_compact_report, format_cost_report, format_model_report,
+    format_model_switch_report, format_permissions_report, format_permissions_switch_report,
+    format_resume_report, render_resume_usage,
+};
 use session_store::{
     create_managed_session_handle, list_managed_sessions, render_session_list,
     resolve_session_reference, write_session_clear_backup,
 };
-use session_reports::{
-    format_auto_compaction_notice, format_compact_report, format_cost_report,
-    format_model_report, format_model_switch_report, format_permissions_report,
-    format_permissions_switch_report, format_resume_report, render_resume_usage,
-};
-#[cfg(test)]
-use session_reports::format_unknown_slash_command_message;
-use tools::{GlobalToolRegistry, RuntimeToolDefinition};
 use status_reports::{
     format_commit_preflight_report, format_commit_skipped_report, format_sandbox_report,
     format_status_report, print_sandbox_status_snapshot, print_status_snapshot,
@@ -96,17 +99,13 @@ use tool_output::{
     push_output_block, push_prompt_cache_record, response_to_events, summarize_tool_payload,
     truncate_for_summary,
 };
+use tools::{GlobalToolRegistry, RuntimeToolDefinition};
+#[cfg(test)]
+use workspace_status::parse_git_status_metadata_for;
 use workspace_status::{
     parse_git_status_branch, parse_git_status_metadata, parse_git_workspace_summary,
     resolve_git_branch_for, GitWorkspaceSummary, StatusContext, StatusUsage,
 };
-#[cfg(test)]
-use runtime_build::{
-    build_runtime_with_plugin_state, describe_tool_progress, format_internal_prompt_progress_line,
-    InternalPromptProgressEvent, InternalPromptProgressState, RuntimePluginState,
-};
-#[cfg(test)]
-use workspace_status::parse_git_status_metadata_for;
 
 const DEFAULT_MODEL: &str = "claude-opus-4-6";
 fn max_tokens_for_model(model: &str) -> u32 {

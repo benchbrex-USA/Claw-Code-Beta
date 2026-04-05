@@ -182,7 +182,10 @@ pub(super) fn format_sandbox_report(status: &runtime::SandboxStatus) -> String {
     )
 }
 
-pub(super) fn format_commit_preflight_report(branch: Option<&str>, summary: GitWorkspaceSummary) -> String {
+pub(super) fn format_commit_preflight_report(
+    branch: Option<&str>,
+    summary: GitWorkspaceSummary,
+) -> String {
     format!(
         "Commit
   Result           ready
@@ -218,7 +221,9 @@ pub(super) fn print_sandbox_status_snapshot() -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-pub(super) fn render_config_report(section: Option<&str>) -> Result<String, Box<dyn std::error::Error>> {
+pub(super) fn render_config_report(
+    section: Option<&str>,
+) -> Result<String, Box<dyn std::error::Error>> {
     let cwd = env::current_dir()?;
     let loader = ConfigLoader::default_for(&cwd);
     let discovered = loader.discover();

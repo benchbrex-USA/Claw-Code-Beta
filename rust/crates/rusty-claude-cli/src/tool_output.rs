@@ -349,7 +349,11 @@ pub(super) fn format_grep_result(icon: &str, parsed: &serde_json::Value) -> Stri
     }
 }
 
-pub(super) fn format_generic_tool_result(icon: &str, name: &str, parsed: &serde_json::Value) -> String {
+pub(super) fn format_generic_tool_result(
+    icon: &str,
+    name: &str,
+    parsed: &serde_json::Value,
+) -> String {
     let rendered_output = match parsed {
         serde_json::Value::String(text) => text.clone(),
         serde_json::Value::Null => String::new(),
@@ -391,7 +395,11 @@ pub(super) fn truncate_for_summary(value: &str, limit: usize) -> String {
     }
 }
 
-pub(super) fn truncate_output_for_display(content: &str, max_lines: usize, max_chars: usize) -> String {
+pub(super) fn truncate_output_for_display(
+    content: &str,
+    max_lines: usize,
+    max_chars: usize,
+) -> String {
     let original = content.trim_end_matches('\n');
     if original.is_empty() {
         return String::new();

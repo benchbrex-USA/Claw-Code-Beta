@@ -33,37 +33,37 @@ mod catalog;
 mod dispatch;
 mod registry;
 mod subagent;
-mod utility_ops;
 #[cfg(test)]
 mod tests;
+mod utility_ops;
 
+pub use catalog::{mvp_tool_specs, ToolSpec};
 pub use registry::{
     GlobalToolRegistry, RuntimeToolDefinition, ToolManifestEntry, ToolRegistry, ToolSource,
 };
 pub use subagent::ToolSearchOutput;
-pub use catalog::{mvp_tool_specs, ToolSpec};
 
-pub(crate) use subagent::{
-    deferred_tool_specs, normalize_tool_search_query, search_tool_specs, SearchableToolSpec,
-};
 use catalog::{normalize_tool_name, permission_mode_from_plugin};
+#[cfg(test)]
+use dispatch::run_task_packet;
 use dispatch::{
     current_workspace_root, execute_tool_with_enforcer, io_to_string,
     maybe_enforce_permission_check, workspace_test_branch_preflight,
-};
-#[cfg(test)]
-use dispatch::run_task_packet;
-use subagent::{
-    execute_agent, execute_skill, execute_todo_write, execute_tool_search, execute_web_fetch,
-    execute_web_search, iso8601_now, BriefOutput, ConfigOutput, NotebookEditOutput,
-    PlanModeOutput, PlanModeState, ReplOutput, ResolvedAttachment, SleepOutput,
-    StructuredOutputResult, WebSearchResultItem,
 };
 #[cfg(test)]
 use subagent::{
     agent_permission_policy, allowed_tools_for_subagent, classify_lane_failure,
     execute_agent_with_spawn, final_assistant_text, persist_agent_terminal_state,
     push_output_block, AgentJob, SubagentToolExecutor,
+};
+pub(crate) use subagent::{
+    deferred_tool_specs, normalize_tool_search_query, search_tool_specs, SearchableToolSpec,
+};
+use subagent::{
+    execute_agent, execute_skill, execute_todo_write, execute_tool_search, execute_web_fetch,
+    execute_web_search, iso8601_now, BriefOutput, ConfigOutput, NotebookEditOutput, PlanModeOutput,
+    PlanModeState, ReplOutput, ResolvedAttachment, SleepOutput, StructuredOutputResult,
+    WebSearchResultItem,
 };
 use utility_ops::{
     execute_brief, execute_config, execute_enter_plan_mode, execute_exit_plan_mode,

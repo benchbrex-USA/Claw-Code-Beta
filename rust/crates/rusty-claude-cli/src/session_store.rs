@@ -18,7 +18,9 @@ pub(super) fn create_managed_session_handle(
     Ok(SessionHandle { id, path })
 }
 
-pub(super) fn resolve_session_reference(reference: &str) -> Result<SessionHandle, Box<dyn std::error::Error>> {
+pub(super) fn resolve_session_reference(
+    reference: &str,
+) -> Result<SessionHandle, Box<dyn std::error::Error>> {
     if SESSION_REFERENCE_ALIASES
         .iter()
         .any(|alias| reference.eq_ignore_ascii_case(alias))
@@ -51,7 +53,9 @@ pub(super) fn resolve_session_reference(reference: &str) -> Result<SessionHandle
     Ok(SessionHandle { id, path })
 }
 
-pub(super) fn resolve_managed_session_path(session_id: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+pub(super) fn resolve_managed_session_path(
+    session_id: &str,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let directory = sessions_dir()?;
     for extension in [PRIMARY_SESSION_EXTENSION, LEGACY_SESSION_EXTENSION] {
         let path = directory.join(format!("{session_id}.{extension}"));
@@ -70,7 +74,8 @@ pub(super) fn is_managed_session_file(path: &Path) -> bool {
         })
 }
 
-pub(super) fn list_managed_sessions() -> Result<Vec<ManagedSessionSummary>, Box<dyn std::error::Error>> {
+pub(super) fn list_managed_sessions(
+) -> Result<Vec<ManagedSessionSummary>, Box<dyn std::error::Error>> {
     let mut sessions = Vec::new();
     for entry in fs::read_dir(sessions_dir()?)? {
         let entry = entry?;
@@ -131,7 +136,8 @@ pub(super) fn list_managed_sessions() -> Result<Vec<ManagedSessionSummary>, Box<
     Ok(sessions)
 }
 
-pub(super) fn latest_managed_session() -> Result<ManagedSessionSummary, Box<dyn std::error::Error>> {
+pub(super) fn latest_managed_session() -> Result<ManagedSessionSummary, Box<dyn std::error::Error>>
+{
     list_managed_sessions()?
         .into_iter()
         .next()
@@ -150,7 +156,9 @@ pub(super) fn format_no_managed_sessions() -> String {
     )
 }
 
-pub(super) fn render_session_list(active_session_id: &str) -> Result<String, Box<dyn std::error::Error>> {
+pub(super) fn render_session_list(
+    active_session_id: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     let sessions = list_managed_sessions()?;
     let mut lines = vec![
         "Sessions".to_string(),

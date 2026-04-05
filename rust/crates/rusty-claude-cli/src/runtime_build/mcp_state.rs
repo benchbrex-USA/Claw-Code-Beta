@@ -99,8 +99,9 @@ impl Drop for BuiltRuntime {
 }
 
 impl RuntimePluginState {
-    pub(crate) fn into_tool_registry(self) -> Result<GlobalToolRegistry, Box<dyn std::error::Error>>
-    {
+    pub(crate) fn into_tool_registry(
+        self,
+    ) -> Result<GlobalToolRegistry, Box<dyn std::error::Error>> {
         let registry = self.tool_registry.clone();
         if let Some(mcp_state) = self.mcp_state {
             mcp_state

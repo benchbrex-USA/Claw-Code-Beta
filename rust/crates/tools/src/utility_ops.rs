@@ -3,7 +3,9 @@
 use super::*;
 
 #[allow(clippy::too_many_lines)]
-pub(super) fn execute_notebook_edit(input: NotebookEditInput) -> Result<NotebookEditOutput, String> {
+pub(super) fn execute_notebook_edit(
+    input: NotebookEditInput,
+) -> Result<NotebookEditOutput, String> {
     let workspace_root = current_workspace_root()?;
     let path = std::path::PathBuf::from(&input.notebook_path);
     if path.extension().and_then(|ext| ext.to_str()) != Some("ipynb") {
@@ -288,7 +290,9 @@ pub(super) fn execute_config(input: ConfigInput) -> Result<ConfigOutput, String>
 
 const PERMISSION_DEFAULT_MODE_PATH: &[&str] = &["permissions", "defaultMode"];
 
-pub(super) fn execute_enter_plan_mode(_input: EnterPlanModeInput) -> Result<PlanModeOutput, String> {
+pub(super) fn execute_enter_plan_mode(
+    _input: EnterPlanModeInput,
+) -> Result<PlanModeOutput, String> {
     let settings_path = config_file_for_scope(ConfigScope::Settings)?;
     let state_path = plan_mode_state_file()?;
     let mut document = read_json_object(&settings_path)?;
@@ -834,7 +838,9 @@ pub(super) fn iso8601_timestamp() -> String {
 }
 
 #[allow(clippy::needless_pass_by_value)]
-pub(super) fn execute_powershell(input: PowerShellInput) -> std::io::Result<runtime::BashCommandOutput> {
+pub(super) fn execute_powershell(
+    input: PowerShellInput,
+) -> std::io::Result<runtime::BashCommandOutput> {
     let _ = &input.description;
     if let Some(output) = workspace_test_branch_preflight(&input.command) {
         return Ok(output);

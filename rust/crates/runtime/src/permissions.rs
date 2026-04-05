@@ -165,7 +165,8 @@ impl PermissionPolicy {
     #[must_use]
     pub fn required_mode_for_invocation(&self, tool_name: &str, input: &str) -> PermissionMode {
         if tool_name == "bash" {
-            return derive_bash_required_mode(input).unwrap_or_else(|| self.required_mode_for(tool_name));
+            return derive_bash_required_mode(input)
+                .unwrap_or_else(|| self.required_mode_for(tool_name));
         }
 
         self.required_mode_for(tool_name)

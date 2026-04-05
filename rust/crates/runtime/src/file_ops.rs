@@ -721,9 +721,9 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        boundary_checked_glob_root, edit_file, glob_search, glob_search_in_workspace,
-        grep_search, grep_search_in_workspace, is_symlink_escape, normalize_missing_path,
-        read_file, read_file_in_workspace, write_file, write_file_in_workspace, GrepSearchInput,
+        boundary_checked_glob_root, edit_file, glob_search, glob_search_in_workspace, grep_search,
+        grep_search_in_workspace, is_symlink_escape, normalize_missing_path, read_file,
+        read_file_in_workspace, write_file, write_file_in_workspace, GrepSearchInput,
         MAX_WRITE_SIZE,
     };
 

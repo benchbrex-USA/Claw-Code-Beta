@@ -28,7 +28,11 @@ Usage
     )
 }
 
-pub(super) fn format_model_switch_report(previous: &str, next: &str, message_count: usize) -> String {
+pub(super) fn format_model_switch_report(
+    previous: &str,
+    next: &str,
+    message_count: usize,
+) -> String {
     format!(
         "Model updated
   Previous         {previous}
@@ -125,7 +129,11 @@ pub(super) fn render_resume_usage() -> String {
     )
 }
 
-pub(super) fn format_compact_report(removed: usize, resulting_messages: usize, skipped: bool) -> String {
+pub(super) fn format_compact_report(
+    removed: usize,
+    resulting_messages: usize,
+    skipped: bool,
+) -> String {
     if skipped {
         format!(
             "Compact

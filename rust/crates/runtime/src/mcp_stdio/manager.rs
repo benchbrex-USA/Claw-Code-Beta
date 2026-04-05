@@ -9,8 +9,8 @@ use tokio::time::timeout;
 use super::process::{default_initialize_params, spawn_mcp_stdio_process, McpStdioProcess};
 use super::{
     JsonRpcError, JsonRpcId, JsonRpcResponse, McpListResourcesParams, McpListResourcesResult,
-    McpListToolsParams, McpReadResourceParams, McpReadResourceResult, McpTool,
-    McpToolCallParams, McpToolCallResult,
+    McpListToolsParams, McpReadResourceParams, McpReadResourceResult, McpTool, McpToolCallParams,
+    McpToolCallResult,
 };
 use crate::config::{McpTransport, RuntimeConfig, ScopedMcpServerConfig};
 use crate::mcp::mcp_tool_name;
@@ -449,30 +449,31 @@ impl McpServerManager {
 
         self.ensure_server_ready(&route.server_name).await?;
         let request_id = self.take_request_id();
-        let response = {
-            let server = self.server_mut(&route.server_name)?;
-            let process = server.process.as_mut().ok_or_else(|| {
-                McpServerManagerError::InvalidResponse {
-                    server_name: route.server_name.clone(),
-                    method: "tools/call",
-                    details: "server process missing after initialization".to_string(),
-                }
-            })?;
-            Self::run_process_request(
-                &route.server_name,
-                "tools/call",
-                timeout_ms,
-                process.call_tool(
-                    request_id,
-                    McpToolCallParams {
-                        name: route.raw_name,
-                        arguments,
-                        meta: None,
-                    },
-                ),
-            )
-            .await
-        };
+        let response =
+            {
+                let server = self.server_mut(&route.server_name)?;
+                let process = server.process.as_mut().ok_or_else(|| {
+                    McpServerManagerError::InvalidResponse {
+                        server_name: route.server_name.clone(),
+                        method: "tools/call",
+                        details: "server process missing after initialization".to_string(),
+                    }
+                })?;
+                Self::run_process_request(
+                    &route.server_name,
+                    "tools/call",
+                    timeout_ms,
+                    process.call_tool(
+                        request_id,
+                        McpToolCallParams {
+                            name: route.raw_name,
+                            arguments,
+                            meta: None,
+                        },
+                    ),
+                )
+                .await
+            };
 
         if let Err(error) = &response {
             if Self::should_reset_server(error) {
@@ -566,11 +567,12 @@ impl McpServerManager {
     }
 
     fn tool_call_timeout_ms(&self, server_name: &str) -> Result<u64, McpServerManagerError> {
-        let server = self.servers.get(server_name).ok_or_else(|| {
-            McpServerManagerError::UnknownServer {
-                server_name: server_name.to_string(),
-            }
-        })?;
+        let server =
+            self.servers
+                .get(server_name)
+                .ok_or_else(|| McpServerManagerError::UnknownServer {
+                    server_name: server_name.to_string(),
+                })?;
         match &server.bootstrap.transport {
             McpClientTransport::Stdio(transport) => Ok(transport.resolved_tool_call_timeout_ms()),
             other => Err(McpServerManagerError::InvalidResponse {
@@ -751,28 +753,29 @@ impl McpServerManager {
         self.ensure_server_ready(server_name).await?;
 
         let request_id = self.take_request_id();
-        let response = {
-            let server = self.server_mut(server_name)?;
-            let process = server.process.as_mut().ok_or_else(|| {
-                McpServerManagerError::InvalidResponse {
-                    server_name: server_name.to_string(),
-                    method: "resources/read",
-                    details: "server process missing after initialization".to_string(),
-                }
-            })?;
-            Self::run_process_request(
-                server_name,
-                "resources/read",
-                MCP_LIST_TOOLS_TIMEOUT_MS,
-                process.read_resource(
-                    request_id,
-                    McpReadResourceParams {
-                        uri: uri.to_string(),
-                    },
-                ),
-            )
-            .await?
-        };
+        let response =
+            {
+                let server = self.server_mut(server_name)?;
+                let process = server.process.as_mut().ok_or_else(|| {
+                    McpServerManagerError::InvalidResponse {
+                        server_name: server_name.to_string(),
+                        method: "resources/read",
+                        details: "server process missing after initialization".to_string(),
+                    }
+                })?;
+                Self::run_process_request(
+                    server_name,
+                    "resources/read",
+                    MCP_LIST_TOOLS_TIMEOUT_MS,
+                    process.read_resource(
+                        request_id,
+                        McpReadResourceParams {
+                            uri: uri.to_string(),
+                        },
+                    ),
+                )
+                .await?
+            };
 
         if let Some(error) = response.error {
             return Err(McpServerManagerError::JsonRpc {

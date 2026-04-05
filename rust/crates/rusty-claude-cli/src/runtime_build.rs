@@ -9,6 +9,7 @@ mod summary;
 use super::*;
 pub(crate) use client::AnthropicRuntimeClient;
 use client::CliHookProgressReporter;
+pub(crate) use completion::slash_command_completion_candidates_with_sessions;
 pub(crate) use mcp_state::{
     build_plugin_manager, build_runtime_plugin_state, build_runtime_plugin_state_with_loader,
     BuiltRuntime, RuntimeMcpState, RuntimePluginState,
@@ -22,7 +23,6 @@ pub(crate) use progress::{
 pub(super) use summary::{
     collect_prompt_cache_events, collect_tool_results, collect_tool_uses, final_assistant_text,
 };
-pub(crate) use completion::slash_command_completion_candidates_with_sessions;
 
 #[allow(clippy::needless_pass_by_value)]
 #[allow(clippy::too_many_arguments)]

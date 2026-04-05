@@ -210,7 +210,9 @@ impl ToolExecutor for CliToolExecutor {
                     let markdown = format_tool_result(tool_name, &error.to_string(), true);
                     self.renderer
                         .stream_markdown(&markdown, &mut io::stdout())
-                        .map_err(|stream_error: io::Error| ToolError::new(stream_error.to_string()))?;
+                        .map_err(|stream_error: io::Error| {
+                            ToolError::new(stream_error.to_string())
+                        })?;
                 }
                 Err(error)
             }
