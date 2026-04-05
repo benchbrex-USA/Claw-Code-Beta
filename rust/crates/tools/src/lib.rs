@@ -392,11 +392,11 @@ impl GlobalToolRegistry {
         }
     }
 
-    /// Execute a built-in or plugin tool directly.
+    /// Execute a built-in tool, plugin tool, or `ToolSearch` directly.
     ///
-    /// Compatibility note: runtime/MCP tools no longer execute through this
-    /// method. Callers that previously passed runtime tool names here must
-    /// migrate to [`GlobalToolRegistry::execute_with_handlers`] and provide a
+    /// Compatibility note: only runtime/MCP tools require
+    /// [`GlobalToolRegistry::execute_with_handlers`]. Callers that previously
+    /// passed runtime tool names here must migrate to that API and provide a
     /// runtime dispatcher.
     pub fn execute(&self, name: &str, input: &Value) -> Result<String, String> {
         match self.resolve_dispatch_target(name)? {
@@ -5420,6 +5420,20 @@ mod tests {
 
         assert!(search_called);
         assert_eq!(output, "{\"source\":\"search\"}");
+    }
+
+    #[test]
+    fn execute_routes_tool_search_without_runtime_dispatcher() {
+        let registry = GlobalToolRegistry::builtin();
+
+        let output = registry
+            .execute("ToolSearch", &json!({"query": "agent"}))
+            .expect("ToolSearch should execute without runtime handlers");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&output).expect("ToolSearch output should be valid JSON");
+
+        assert_eq!(parsed["query"], "agent");
+        assert!(parsed["matches"].is_array());
     }
 
     #[test]

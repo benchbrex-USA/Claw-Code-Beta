@@ -108,7 +108,7 @@ Recent runtime hardening tightened the live execution path, not just the tool sp
 
 - Built-in tools and plugin tools now share the same permission policy surface.
 - The CLI enforces that same policy before dispatching `ToolSearch` and runtime/MCP tool definitions such as `MCPTool`, `ListMcpResourcesTool`, and `ReadMcpResourceTool`.
-- Dispatcher contract: call `GlobalToolRegistry::execute_with_handlers(...)` for `ToolSearch` and runtime/MCP tools. `GlobalToolRegistry::execute(...)` now covers built-ins and plugin tools only and rejects runtime tools without a runtime dispatcher.
+- Dispatcher contract: `GlobalToolRegistry::execute(...)` handles built-ins, plugin tools, and `ToolSearch`. Only runtime/MCP tools require `GlobalToolRegistry::execute_with_handlers(...)`.
 - `write_file`, `edit_file`, and notebook mutations route through workspace-safe helpers, so `workspace-write` sessions cannot mutate paths outside the active workspace.
 - The verification baseline for these surfaces is `cargo clippy --all-targets --all-features -- -D warnings` plus `cargo test --workspace`.
 

@@ -5422,12 +5422,11 @@ impl ToolExecutor for CliToolExecutor {
         }
         let value = serde_json::from_str(input)
             .map_err(|error| ToolError::new(format!("invalid tool input JSON: {error}")))?;
-        // Runtime/MCP tools and ToolSearch must go through the registry's
-        // handler-based dispatcher so permission enforcement runs before the
-        // runtime/search branch executes. Compatibility note: callers that used
-        // `GlobalToolRegistry::execute` for runtime tools must migrate to
-        // `execute_with_handlers`; `execute` now covers built-ins and plugin
-        // tools only.
+        // Runtime/MCP tools must go through the registry's handler-based
+        // dispatcher so permission enforcement runs before the runtime branch
+        // executes. Compatibility note: `GlobalToolRegistry::execute` still
+        // covers built-ins, plugin tools, and ToolSearch; only runtime/MCP
+        // tools must migrate to `execute_with_handlers`.
         let result = self
             .tool_registry
             .execute_with_handlers(
