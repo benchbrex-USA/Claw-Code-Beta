@@ -38,6 +38,8 @@ pub mod summary_compression;
 pub mod task_packet;
 pub mod task_registry;
 pub mod team_cron_registry;
+#[doc(hidden)]
+pub mod test_utils;
 pub mod trust_resolver;
 mod usage;
 pub mod worker_boot;
@@ -63,10 +65,9 @@ pub use conversation::{
 };
 pub use file_ops::{
     edit_file, edit_file_in_workspace, glob_search, glob_search_in_workspace, grep_search,
-    grep_search_in_workspace, read_file, read_file_in_workspace, write_file,
-    write_file_in_workspace, EditFileOutput, GlobSearchOutput, GrepSearchInput,
-    GrepSearchOutput, ReadFileOutput, StructuredPatchHunk, TextFilePayload,
-    WriteFileOutput, resolve_path_in_workspace,
+    grep_search_in_workspace, read_file, read_file_in_workspace, resolve_path_in_workspace,
+    write_file, write_file_in_workspace, EditFileOutput, GlobSearchOutput, GrepSearchInput,
+    GrepSearchOutput, ReadFileOutput, StructuredPatchHunk, TextFilePayload, WriteFileOutput,
 };
 pub use hooks::{
     HookAbortSignal, HookEvent, HookProgressEvent, HookProgressReporter, HookRunResult, HookRunner,

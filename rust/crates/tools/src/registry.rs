@@ -326,9 +326,7 @@ impl GlobalToolRegistry {
                 self.enforce(name, input)?;
                 runtime_handler(tool, input)
             }
-            DispatchTarget::Plugin(tool) => {
-                self.execute_plugin_tool(name, tool, input)
-            }
+            DispatchTarget::Plugin(tool) => self.execute_plugin_tool(name, tool, input),
         }
     }
 
@@ -408,94 +406,50 @@ fn validate_plugin_workspace_paths(
     input: &Value,
     workspace_root: &Path,
 ) -> Result<(), String> {
-    validate_plugin_value_paths(tool.definition().name.as_str(), None, input, workspace_root)
+    extract_path_values(input).into_iter().try_for_each(|path| {
+        validate_plugin_path(tool.definition().name.as_str(), &path, workspace_root)
+    })
 }
 
-fn validate_plugin_value_paths(
-    tool_name: &str,
-    key: Option<&str>,
-    value: &Value,
-    workspace_root: &Path,
-) -> Result<(), String> {
+fn extract_path_values(value: &Value) -> Vec<String> {
+    let mut paths = Vec::new();
+    collect_path_values(value, &mut paths);
+    paths
+}
+
+fn collect_path_values(value: &Value, paths: &mut Vec<String>) {
     match value {
-        Value::Object(object) => object.iter().try_for_each(|(child_key, child_value)| {
-            validate_plugin_value_paths(tool_name, Some(child_key), child_value, workspace_root)
-        }),
-        Value::Array(items) if key.is_some_and(is_path_list_key) => items.iter().try_for_each(
-            |item| validate_plugin_path_value(tool_name, key.unwrap_or("paths"), item, workspace_root),
-        ),
+        Value::Object(object) => object
+            .values()
+            .for_each(|child_value| collect_path_values(child_value, paths)),
         Value::Array(items) => items
             .iter()
-            .try_for_each(|item| validate_plugin_value_paths(tool_name, None, item, workspace_root)),
-        Value::String(path) if key.is_some_and(is_path_key) => {
-            resolve_path_in_workspace(path, workspace_root, true)
-                .map(|_| ())
-                .map_err(|error| {
-                    format!(
-                        "plugin tool `{tool_name}` path `{path}` for `{}` is not workspace-safe: {error}",
-                        key.unwrap_or("path")
-                    )
-                })
+            .for_each(|child_value| collect_path_values(child_value, paths)),
+        Value::String(candidate) if looks_like_filesystem_path(candidate) => {
+            paths.push(candidate.clone());
         }
-        _ => Ok(()),
+        _ => {}
     }
 }
 
-fn validate_plugin_path_value(
-    tool_name: &str,
-    key: &str,
-    value: &Value,
-    workspace_root: &Path,
-) -> Result<(), String> {
-    match value {
-        Value::String(path) => resolve_path_in_workspace(path, workspace_root, true)
-            .map(|_| ())
-            .map_err(|error| {
-                format!(
-                    "plugin tool `{tool_name}` path `{path}` for `{key}` is not workspace-safe: {error}"
-                )
-            }),
-        Value::Array(items) => items
-            .iter()
-            .try_for_each(|item| validate_plugin_path_value(tool_name, key, item, workspace_root)),
-        Value::Object(object) => object.iter().try_for_each(|(child_key, child_value)| {
-            validate_plugin_value_paths(tool_name, Some(child_key), child_value, workspace_root)
-        }),
-        _ => Ok(()),
-    }
+fn looks_like_filesystem_path(value: &str) -> bool {
+    value.starts_with('/') || value.starts_with("./") || value.starts_with("~/")
 }
 
-fn is_path_key(key: &str) -> bool {
-    matches!(
-        key,
-        "path"
-            | "file_path"
-            | "filePath"
-            | "notebook_path"
-            | "notebookPath"
-            | "cwd"
-            | "workdir"
-            | "directory"
-            | "dir"
-            | "root"
-            | "workspace_root"
-            | "workspaceRoot"
-            | "output_path"
-            | "outputPath"
-            | "input_path"
-            | "inputPath"
-            | "source_path"
-            | "sourcePath"
-            | "target_path"
-            | "targetPath"
-            | "destination_path"
-            | "destinationPath"
-    ) || key.ends_with("_path")
-        || key.ends_with("Path")
+fn validate_plugin_path(tool_name: &str, path: &str, workspace_root: &Path) -> Result<(), String> {
+    let resolved_input = expand_home_path(path)?;
+    resolve_path_in_workspace(&resolved_input, workspace_root, true)
+        .map(|_| ())
+        .map_err(|error| {
+            format!("plugin tool `{tool_name}` path `{path}` is not workspace-safe: {error}")
+        })
 }
 
-fn is_path_list_key(key: &str) -> bool {
-    matches!(key, "paths" | "file_paths" | "filePaths" | "files")
-        || key.ends_with("_paths")
-        || key.ends_with("Paths")
+fn expand_home_path(path: &str) -> Result<String, String> {
+    let Some(stripped) = path.strip_prefix("~/") else {
+        return Ok(path.to_string());
+    };
+    let home = std::env::var_os("HOME")
+        .ok_or_else(|| format!("plugin path `{path}` could not expand `~` without HOME set"))?;
+    Ok(Path::new(&home).join(stripped).display().to_string())
 }

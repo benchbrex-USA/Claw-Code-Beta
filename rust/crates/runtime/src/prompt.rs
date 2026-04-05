@@ -505,6 +505,7 @@ mod tests {
         ContextFile, ProjectContext, SystemPromptBuilder, SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
     };
     use crate::config::ConfigLoader;
+    use crate::test_utils::CwdGuard;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -696,7 +697,7 @@ mod tests {
 
         let _guard = env_lock();
         ensure_valid_cwd();
-        let previous = std::env::current_dir().expect("cwd");
+        let _guard = CwdGuard::new();
         let original_home = std::env::var("HOME").ok();
         let original_claw_home = std::env::var("CLAW_CONFIG_HOME").ok();
         std::env::set_var("HOME", &root);
@@ -709,7 +710,6 @@ mod tests {
 
 ",
             );
-        std::env::set_current_dir(previous).expect("restore cwd");
         if let Some(value) = original_home {
             std::env::set_var("HOME", value);
         } else {
