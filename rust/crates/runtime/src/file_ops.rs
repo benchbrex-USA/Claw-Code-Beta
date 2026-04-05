@@ -704,12 +704,15 @@ pub fn grep_search_in_workspace(
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+    use std::path::{Component, Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        edit_file, glob_search, glob_search_in_workspace, grep_search, grep_search_in_workspace,
-        is_symlink_escape, read_file, read_file_in_workspace, write_file, write_file_in_workspace,
-        GrepSearchInput, MAX_WRITE_SIZE,
+        boundary_checked_glob_root, edit_file, glob_search, glob_search_in_workspace,
+        grep_search, grep_search_in_workspace, is_symlink_escape, normalize_missing_path,
+        read_file, read_file_in_workspace, write_file, write_file_in_workspace, GrepSearchInput,
+        MAX_WRITE_SIZE,
     };
 
     fn temp_path(name: &str) -> std::path::PathBuf {
@@ -718,6 +721,102 @@ mod tests {
             .expect("time should move forward")
             .as_nanos();
         std::env::temp_dir().join(format!("clawd-native-{name}-{unique}"))
+    }
+
+    fn lexical_normalize(path: &Path) -> PathBuf {
+        let mut normalized = PathBuf::new();
+        for component in path.components() {
+            match component {
+                Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+                Component::RootDir => normalized.push(component.as_os_str()),
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    let _ = normalized.pop();
+                }
+                Component::Normal(segment) => normalized.push(segment),
+            }
+        }
+        normalized
+    }
+
+    fn canonical_temp_path(label: &str) -> PathBuf {
+        std::env::temp_dir()
+            .canonicalize()
+            .expect("canonical temp dir")
+            .join(format!(
+                "clawd-native-{label}-{}",
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("system clock should be after unix epoch")
+                    .as_nanos()
+            ))
+    }
+
+    fn normal_segment() -> impl Strategy<Value = String> {
+        "[a-zA-Z0-9_-]{1,8}".prop_map(|segment| segment)
+    }
+
+    fn path_component() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just(".".to_string()),
+            Just("..".to_string()),
+            normal_segment(),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn normalize_missing_path_matches_lexical_model_for_missing_paths(
+            base_segments in prop::collection::vec(normal_segment(), 1..4),
+            relative_segments in prop::collection::vec(path_component(), 0..8),
+        ) {
+            let root = canonical_temp_path("proptest-normalize");
+            let base = base_segments.iter().fold(root, |path, segment| path.join(segment));
+            let raw = relative_segments.iter().fold(base.clone(), |path, segment| path.join(segment));
+
+            let actual = normalize_missing_path(&raw).expect("normalization should succeed");
+            let expected = lexical_normalize(&raw);
+            let has_relative_components = actual
+                .components()
+                .any(|component| matches!(component, Component::CurDir | Component::ParentDir));
+
+            prop_assert_eq!(actual, expected);
+            prop_assert!(!has_relative_components);
+        }
+
+        #[test]
+        fn boundary_checked_glob_root_matches_prefix_model(
+            base_segments in prop::collection::vec(normal_segment(), 1..4),
+            prefix_segments in prop::collection::vec(path_component(), 0..6),
+            wildcard_suffix in prop_oneof![
+                Just("*".to_string()),
+                Just("**/*.rs".to_string()),
+                Just("?.txt".to_string()),
+                Just("[ab]*".to_string()),
+                Just("{alpha,beta}.md".to_string()),
+            ],
+        ) {
+            let root = canonical_temp_path("proptest-glob-root");
+            let base_dir = base_segments.iter().fold(root, |path, segment| path.join(segment));
+            let prefix = prefix_segments.join("/");
+            let pattern = if prefix.is_empty() {
+                wildcard_suffix.clone()
+            } else {
+                format!("{prefix}/{wildcard_suffix}")
+            };
+
+            let actual = boundary_checked_glob_root(&pattern, &base_dir)
+                .expect("glob root resolution should succeed");
+            let expected = if prefix.is_empty() {
+                base_dir.clone()
+            } else {
+                lexical_normalize(&base_dir.join(prefix))
+            };
+
+            prop_assert_eq!(actual.as_path(), expected.as_path());
+            prop_assert!(!actual.to_string_lossy().contains('*'));
+            prop_assert!(!actual.to_string_lossy().contains('?'));
+        }
     }
 
     #[test]

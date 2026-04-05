@@ -333,17 +333,24 @@ fn framework_notes(detection: &RepoDetection) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{initialize_repo, render_init_claude_md};
+    use super::{initialize_repo, render_init_claude_md, InitStatus};
     use std::fs;
     use std::path::Path;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_dir() -> std::path::PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("time should be after epoch")
             .as_nanos();
-        std::env::temp_dir().join(format!("rusty-claude-init-{nanos}"))
+        let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("rusty-claude-init-{nanos}-{counter}"))
+    }
+
+    fn cleanup_temp_dir(root: &Path) {
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -378,7 +385,7 @@ mod tests {
         assert!(claude_md.contains("Languages: Rust."));
         assert!(claude_md.contains("cargo clippy --workspace --all-targets -- -D warnings"));
 
-        fs::remove_dir_all(root).expect("cleanup temp dir");
+        cleanup_temp_dir(&root);
     }
 
     #[test]
@@ -394,11 +401,14 @@ mod tests {
             .render()
             .contains("CLAUDE.md        skipped (already exists)"));
         let second = initialize_repo(&root).expect("second init should succeed");
-        let second_rendered = second.render();
-        assert!(second_rendered.contains(".claude/         skipped (already exists)"));
-        assert!(second_rendered.contains(".claude.json     skipped (already exists)"));
-        assert!(second_rendered.contains(".gitignore       skipped (already exists)"));
-        assert!(second_rendered.contains("CLAUDE.md        skipped (already exists)"));
+        assert_eq!(second.artifacts[0].name, ".claude/");
+        assert_eq!(second.artifacts[0].status, InitStatus::Skipped);
+        assert_eq!(second.artifacts[1].name, ".claude.json");
+        assert_eq!(second.artifacts[1].status, InitStatus::Skipped);
+        assert_eq!(second.artifacts[2].name, ".gitignore");
+        assert_eq!(second.artifacts[2].status, InitStatus::Skipped);
+        assert_eq!(second.artifacts[3].name, "CLAUDE.md");
+        assert_eq!(second.artifacts[3].status, InitStatus::Skipped);
         assert_eq!(
             fs::read_to_string(root.join("CLAUDE.md")).expect("read existing claude md"),
             "custom guidance\n"
@@ -407,7 +417,7 @@ mod tests {
         assert_eq!(gitignore.matches(".claude/settings.local.json").count(), 1);
         assert_eq!(gitignore.matches(".claude/sessions/").count(), 1);
 
-        fs::remove_dir_all(root).expect("cleanup temp dir");
+        cleanup_temp_dir(&root);
     }
 
     #[test]
@@ -428,6 +438,6 @@ mod tests {
         assert!(rendered.contains("pyproject.toml"));
         assert!(rendered.contains("Next.js detected"));
 
-        fs::remove_dir_all(root).expect("cleanup temp dir");
+        cleanup_temp_dir(&root);
     }
 }

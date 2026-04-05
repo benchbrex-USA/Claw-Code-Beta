@@ -131,7 +131,7 @@ impl PermissionEnforcer {
             },
             PermissionMode::WorkspaceWrite => {
                 match boundary_checked_write_path(path, workspace_root) {
-                    Ok(_) => EnforcementResult::Allowed,
+                    Ok(()) => EnforcementResult::Allowed,
                     Err(error) => EnforcementResult::Denied {
                         tool: "write_file".to_owned(),
                         active_mode: mode.as_str().to_owned(),
@@ -143,7 +143,7 @@ impl PermissionEnforcer {
             // Allow and DangerFullAccess permit all writes
             PermissionMode::Allow | PermissionMode::DangerFullAccess => EnforcementResult::Allowed,
             PermissionMode::Prompt => match boundary_checked_write_path(path, workspace_root) {
-                Ok(_) => EnforcementResult::NeedsConfirmation {
+                Ok(()) => EnforcementResult::NeedsConfirmation {
                     tool: "write_file".to_owned(),
                     active_mode: mode.as_str().to_owned(),
                     required_mode: PermissionMode::WorkspaceWrite.as_str().to_owned(),

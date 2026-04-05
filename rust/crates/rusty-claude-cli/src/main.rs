@@ -9,6 +9,7 @@
 mod init;
 mod input;
 mod render;
+mod cli_tools;
 
 use std::collections::BTreeSet;
 use std::env;
@@ -35,6 +36,7 @@ use commands::{
     slash_command_specs, validate_slash_command_input, SlashCommand,
 };
 use compat_harness::{extract_manifest, UpstreamPaths};
+use cli_tools::{CliPermissionPrompter, CliToolExecutor};
 use init::initialize_repo;
 use plugins::{PluginHooks, PluginManager, PluginManagerConfig, PluginRegistry};
 use render::{MarkdownStreamState, Spinner, TerminalRenderer};
@@ -1688,31 +1690,6 @@ impl Drop for BuiltRuntime {
         let _ = self.shutdown_mcp();
         let _ = self.shutdown_plugins();
     }
-}
-
-#[derive(Debug, Deserialize)]
-struct ToolSearchRequest {
-    query: String,
-    max_results: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-struct McpToolRequest {
-    #[serde(rename = "qualifiedName")]
-    qualified_name: Option<String>,
-    tool: Option<String>,
-    arguments: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ListMcpResourcesRequest {
-    server: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ReadMcpResourceRequest {
-    server: String,
-    uri: String,
 }
 
 impl RuntimeMcpState {
@@ -4426,55 +4403,6 @@ impl runtime::HookProgressReporter for CliHookProgressReporter {
     }
 }
 
-struct CliPermissionPrompter {
-    current_mode: PermissionMode,
-}
-
-impl CliPermissionPrompter {
-    fn new(current_mode: PermissionMode) -> Self {
-        Self { current_mode }
-    }
-}
-
-impl runtime::PermissionPrompter for CliPermissionPrompter {
-    fn decide(
-        &mut self,
-        request: &runtime::PermissionRequest,
-    ) -> runtime::PermissionPromptDecision {
-        println!();
-        println!("Permission approval required");
-        println!("  Tool             {}", request.tool_name);
-        println!("  Current mode     {}", self.current_mode.as_str());
-        println!("  Required mode    {}", request.required_mode.as_str());
-        if let Some(reason) = &request.reason {
-            println!("  Reason           {reason}");
-        }
-        println!("  Input            {}", request.input);
-        print!("Approve this tool call? [y/N]: ");
-        let _ = io::stdout().flush();
-
-        let mut response = String::new();
-        match io::stdin().read_line(&mut response) {
-            Ok(_) => {
-                let normalized = response.trim().to_ascii_lowercase();
-                if matches!(normalized.as_str(), "y" | "yes") {
-                    runtime::PermissionPromptDecision::Allow
-                } else {
-                    runtime::PermissionPromptDecision::Deny {
-                        reason: format!(
-                            "tool '{}' denied by user approval prompt",
-                            request.tool_name
-                        ),
-                    }
-                }
-            }
-            Err(error) => runtime::PermissionPromptDecision::Deny {
-                reason: format!("permission approval failed: {error}"),
-            },
-        }
-    }
-}
-
 struct AnthropicRuntimeClient {
     runtime: tokio::runtime::Runtime,
     client: AnthropicClient,
@@ -5322,147 +5250,6 @@ fn prompt_cache_record_to_runtime_event(
         current_cache_read_input_tokens: cache_break.current_cache_read_input_tokens,
         token_drop: cache_break.token_drop,
     })
-}
-
-struct CliToolExecutor {
-    renderer: TerminalRenderer,
-    emit_output: bool,
-    allowed_tools: Option<AllowedToolSet>,
-    tool_registry: GlobalToolRegistry,
-    mcp_state: Option<Arc<Mutex<RuntimeMcpState>>>,
-}
-
-impl CliToolExecutor {
-    fn new(
-        allowed_tools: Option<AllowedToolSet>,
-        emit_output: bool,
-        tool_registry: GlobalToolRegistry,
-        mcp_state: Option<Arc<Mutex<RuntimeMcpState>>>,
-    ) -> Self {
-        Self {
-            renderer: TerminalRenderer::new(),
-            emit_output,
-            allowed_tools,
-            tool_registry,
-            mcp_state,
-        }
-    }
-
-    fn execute_search_tool(&self, value: &serde_json::Value) -> Result<String, ToolError> {
-        let input: ToolSearchRequest = serde_json::from_value(value.clone())
-            .map_err(|error| ToolError::new(format!("invalid tool input JSON: {error}")))?;
-        let (pending_mcp_servers, mcp_degraded) =
-            self.mcp_state.as_ref().map_or((None, None), |state| {
-                let state = state
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                (state.pending_servers(), state.degraded_report())
-            });
-        serde_json::to_string_pretty(&self.tool_registry.search(
-            &input.query,
-            input.max_results.unwrap_or(5),
-            pending_mcp_servers,
-            mcp_degraded,
-        ))
-        .map_err(|error| ToolError::new(error.to_string()))
-    }
-
-    fn execute_runtime_tool(
-        &self,
-        tool_name: &str,
-        value: &serde_json::Value,
-    ) -> Result<String, ToolError> {
-        let Some(mcp_state) = &self.mcp_state else {
-            return Err(ToolError::new(format!(
-                "runtime tool `{tool_name}` is unavailable without configured MCP servers"
-            )));
-        };
-        let mut mcp_state = mcp_state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-        match tool_name {
-            "MCPTool" => {
-                let input: McpToolRequest = serde_json::from_value(value.clone())
-                    .map_err(|error| ToolError::new(format!("invalid tool input JSON: {error}")))?;
-                let qualified_name = input
-                    .qualified_name
-                    .or(input.tool)
-                    .ok_or_else(|| ToolError::new("missing required field `qualifiedName`"))?;
-                mcp_state.call_tool(&qualified_name, input.arguments)
-            }
-            "ListMcpResourcesTool" => {
-                let input: ListMcpResourcesRequest = serde_json::from_value(value.clone())
-                    .map_err(|error| ToolError::new(format!("invalid tool input JSON: {error}")))?;
-                match input.server {
-                    Some(server_name) => mcp_state.list_resources_for_server(&server_name),
-                    None => mcp_state.list_resources_for_all_servers(),
-                }
-            }
-            "ReadMcpResourceTool" => {
-                let input: ReadMcpResourceRequest = serde_json::from_value(value.clone())
-                    .map_err(|error| ToolError::new(format!("invalid tool input JSON: {error}")))?;
-                mcp_state.read_resource(&input.server, &input.uri)
-            }
-            _ => mcp_state.call_tool(tool_name, Some(value.clone())),
-        }
-    }
-}
-
-impl ToolExecutor for CliToolExecutor {
-    fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
-        if self
-            .allowed_tools
-            .as_ref()
-            .is_some_and(|allowed| !allowed.contains(tool_name))
-        {
-            return Err(ToolError::new(format!(
-                "tool `{tool_name}` is not enabled by the current --allowedTools setting"
-            )));
-        }
-        let value = serde_json::from_str(input)
-            .map_err(|error| ToolError::new(format!("invalid tool input JSON: {error}")))?;
-        // Runtime/MCP tools must go through the registry's handler-based
-        // dispatcher so permission enforcement runs before the runtime branch
-        // executes. Compatibility note: `GlobalToolRegistry::execute` still
-        // covers built-ins, plugin tools, and ToolSearch; only runtime/MCP
-        // tools must migrate to `execute_with_handlers`.
-        let result = self
-            .tool_registry
-            .execute_with_handlers(
-                tool_name,
-                &value,
-                |tool_input| {
-                    self.execute_search_tool(tool_input)
-                        .map_err(|error| error.to_string())
-                },
-                |runtime_tool, tool_input| {
-                    self.execute_runtime_tool(&runtime_tool.name, tool_input)
-                        .map_err(|error| error.to_string())
-                },
-            )
-            .map_err(ToolError::new);
-        match result {
-            Ok(output) => {
-                if self.emit_output {
-                    let markdown = format_tool_result(tool_name, &output, false);
-                    self.renderer
-                        .stream_markdown(&markdown, &mut io::stdout())
-                        .map_err(|error| ToolError::new(error.to_string()))?;
-                }
-                Ok(output)
-            }
-            Err(error) => {
-                if self.emit_output {
-                    let markdown = format_tool_result(tool_name, &error.to_string(), true);
-                    self.renderer
-                        .stream_markdown(&markdown, &mut io::stdout())
-                        .map_err(|stream_error| ToolError::new(stream_error.to_string()))?;
-                }
-                Err(error)
-            }
-        }
-    }
 }
 
 fn permission_policy(

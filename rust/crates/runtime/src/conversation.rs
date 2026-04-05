@@ -800,12 +800,119 @@ mod tests {
     use crate::ToolError;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
     use telemetry::{MemoryTelemetrySink, SessionTracer, TelemetryEvent};
 
     struct ScriptedApiClient {
         call_count: usize,
+    }
+
+    struct PromptedWriteApiClient {
+        call_count: usize,
+    }
+
+    impl ApiClient for PromptedWriteApiClient {
+        fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            self.call_count += 1;
+            match self.call_count {
+                1 => {
+                    assert!(request
+                        .messages
+                        .iter()
+                        .any(|message| message.role == MessageRole::User));
+                    Ok(vec![
+                        AssistantEvent::ToolUse {
+                            id: "tool-write".to_string(),
+                            name: "write_file".to_string(),
+                            input: r#"{"path":"approved.txt","content":"approved"}"#
+                                .to_string(),
+                        },
+                        AssistantEvent::MessageStop,
+                    ])
+                }
+                2 => Ok(vec![
+                    AssistantEvent::TextDelta("done".to_string()),
+                    AssistantEvent::MessageStop,
+                ]),
+                _ => unreachable!("extra API call"),
+            }
+        }
+    }
+
+    struct PromptModeApprover {
+        approved: Arc<AtomicBool>,
+    }
+
+    impl PermissionPrompter for PromptModeApprover {
+        fn decide(&mut self, request: &PermissionRequest) -> PermissionPromptDecision {
+            assert_eq!(request.tool_name, "write_file");
+            assert_eq!(request.current_mode, PermissionMode::Prompt);
+            assert_eq!(request.required_mode, PermissionMode::WorkspaceWrite);
+            assert!(request
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("requires explicit confirmation")));
+            self.approved.store(true, Ordering::SeqCst);
+            PermissionPromptDecision::Allow
+        }
+    }
+
+    fn build_prompt_mode_write_runtime() -> (
+        ConversationRuntime<PromptedWriteApiClient, StaticToolExecutor>,
+        PromptModeApprover,
+        Arc<AtomicBool>,
+        PathBuf,
+    ) {
+        let workspace = std::env::temp_dir().join(format!(
+            "conversation-prompt-approval-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time should move forward")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&workspace).expect("workspace should exist");
+        let approved = Arc::new(AtomicBool::new(false));
+        let approved_for_tool = approved.clone();
+        let write_target = workspace.join("approved.txt");
+        let tool_executor = StaticToolExecutor::new().register("write_file", move |input| {
+            assert!(
+                approved_for_tool.load(Ordering::SeqCst),
+                "tool should execute only after approval"
+            );
+            let parsed: serde_json::Value =
+                serde_json::from_str(input).expect("tool input should be valid JSON");
+            let content = parsed["content"]
+                .as_str()
+                .expect("content should be present");
+            fs::write(&write_target, content).expect("approved write should succeed");
+            Ok("approved".to_string())
+        });
+        let permission_policy = PermissionPolicy::new(PermissionMode::Prompt)
+            .with_tool_requirement("write_file", PermissionMode::WorkspaceWrite);
+        let system_prompt = SystemPromptBuilder::new()
+            .with_project_context(ProjectContext {
+                cwd: workspace.clone(),
+                current_date: "2026-03-31".to_string(),
+                git_status: None,
+                git_diff: None,
+                instruction_files: Vec::new(),
+            })
+            .with_os("linux", "6.8")
+            .build();
+        let runtime = ConversationRuntime::new(
+            Session::new(),
+            PromptedWriteApiClient { call_count: 0 },
+            tool_executor,
+            permission_policy,
+            system_prompt,
+        );
+        let prompter = PromptModeApprover {
+            approved: approved.clone(),
+        };
+
+        (runtime, prompter, approved, workspace)
     }
 
     impl ApiClient for ScriptedApiClient {
@@ -924,6 +1031,24 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn prompt_mode_confirmation_executes_write_tool_end_to_end() {
+        let (mut runtime, mut prompter, approved, workspace) = build_prompt_mode_write_runtime();
+
+        let summary = runtime
+            .run_turn("write the file", Some(&mut prompter))
+            .expect("prompt approval flow should succeed");
+
+        assert!(approved.load(Ordering::SeqCst));
+        assert_eq!(
+            fs::read_to_string(workspace.join("approved.txt")).expect("approved file should exist"),
+            "approved"
+        );
+        assert_eq!(summary.iterations, 2);
+        assert_eq!(summary.tool_results.len(), 1);
+        let _ = fs::remove_dir_all(workspace);
     }
 
     #[test]
