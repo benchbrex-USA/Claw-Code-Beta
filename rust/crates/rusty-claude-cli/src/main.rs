@@ -27,9 +27,10 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use api::{
-    resolve_startup_auth_source, AnthropicClient, AuthSource, ContentBlockDelta, InputContentBlock,
-    InputMessage, MessageRequest, MessageResponse, OutputContentBlock, PromptCache,
-    StreamEvent as ApiStreamEvent, ToolChoice, ToolDefinition, ToolResultContentBlock,
+    max_tokens_for_model, resolve_startup_auth_source, AnthropicClient, AuthSource,
+    ContentBlockDelta, InputContentBlock, InputMessage, MessageRequest, MessageResponse,
+    OutputContentBlock, PromptCache, StreamEvent as ApiStreamEvent, ToolChoice, ToolDefinition,
+    ToolResultContentBlock,
 };
 
 use auth::{run_login, run_logout};
@@ -108,14 +109,32 @@ use workspace_status::{
 };
 
 const DEFAULT_MODEL: &str = "claude-opus-4-6";
-fn max_tokens_for_model(model: &str) -> u32 {
-    if model.contains("opus") {
-        32_000
-    } else {
-        64_000
-    }
+
+fn current_date() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let days = secs / 86_400;
+    let (y, m, d) = civil_from_days(i64::try_from(days).unwrap_or(i64::MAX));
+    format!("{y:04}-{m:02}-{d:02}")
 }
-const DEFAULT_DATE: &str = "2026-03-31";
+
+/// Convert days since Unix epoch to (year, month, day). Algorithm from Howard Hinnant.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
+    let doe = (z - era * 146_097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = i64::from(yoe) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
 const DEFAULT_OAUTH_CALLBACK_PORT: u16 = 4545;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const BUILD_TARGET: Option<&str> = option_env!("TARGET");
@@ -142,7 +161,20 @@ const CLI_OPTION_SUGGESTIONS: &[&str] = &[
 
 type AllowedToolSet = BTreeSet<String>;
 
+fn init_tracing() {
+    use tracing_subscriber::{fmt, EnvFilter};
+
+    let filter = EnvFilter::try_from_env("CLAW_LOG").unwrap_or_else(|_| EnvFilter::new("warn"));
+
+    if env::var("CLAW_LOG_FORMAT").as_deref() == Ok("json") {
+        fmt().with_env_filter(filter).json().init();
+    } else {
+        fmt().with_env_filter(filter).compact().init();
+    }
+}
+
 fn main() {
+    init_tracing();
     if let Err(error) = run() {
         let message = error.to_string();
         if message.contains("`claw --help`") {
@@ -1176,7 +1208,8 @@ impl LiveCli {
 
         let previous = self.permission_mode.as_str().to_string();
         let session = self.runtime.session().clone();
-        self.permission_mode = permission_mode_from_label(normalized);
+        self.permission_mode = permission_mode_from_label(normalized)
+            .unwrap_or(PermissionMode::WorkspaceWrite);
         let runtime = build_runtime(
             session,
             &self.session.id,

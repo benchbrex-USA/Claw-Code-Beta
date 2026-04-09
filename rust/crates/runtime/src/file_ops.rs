@@ -631,6 +631,7 @@ pub fn resolve_path_in_workspace(
 }
 
 /// Read a file with workspace boundary enforcement.
+#[tracing::instrument(skip(workspace_root), fields(path))]
 pub fn read_file_in_workspace(
     path: &str,
     offset: Option<usize>,
@@ -638,20 +639,24 @@ pub fn read_file_in_workspace(
     workspace_root: &Path,
 ) -> io::Result<ReadFileOutput> {
     let absolute_path = resolve_path_in_workspace(path, workspace_root, false)?;
+    tracing::debug!("reading file in workspace");
     read_file_at_path(&absolute_path, offset, limit)
 }
 
 /// Write a file with workspace boundary enforcement.
+#[tracing::instrument(skip(content, workspace_root), fields(path))]
 pub fn write_file_in_workspace(
     path: &str,
     content: &str,
     workspace_root: &Path,
 ) -> io::Result<WriteFileOutput> {
     let absolute_path = resolve_path_in_workspace(path, workspace_root, true)?;
+    tracing::debug!("writing file in workspace");
     write_file_at_path(&absolute_path, content)
 }
 
 /// Edit a file with workspace boundary enforcement.
+#[tracing::instrument(skip(old_string, new_string, workspace_root), fields(path))]
 pub fn edit_file_in_workspace(
     path: &str,
     old_string: &str,
@@ -660,6 +665,7 @@ pub fn edit_file_in_workspace(
     workspace_root: &Path,
 ) -> io::Result<EditFileOutput> {
     let absolute_path = resolve_path_in_workspace(path, workspace_root, false)?;
+    tracing::debug!("editing file in workspace");
     edit_file_at_path(&absolute_path, old_string, new_string, replace_all)
 }
 

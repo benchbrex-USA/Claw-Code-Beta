@@ -409,15 +409,17 @@ fn parse_permission_mode_arg(value: &str) -> Result<PermissionMode, String> {
                 "unsupported permission mode '{value}'. Use read-only, workspace-write, or danger-full-access."
             )
         })
-        .map(permission_mode_from_label)
+        .and_then(permission_mode_from_label)
 }
 
-pub(super) fn permission_mode_from_label(mode: &str) -> PermissionMode {
+pub(super) fn permission_mode_from_label(mode: &str) -> Result<PermissionMode, String> {
     match mode {
-        "read-only" => PermissionMode::ReadOnly,
-        "workspace-write" => PermissionMode::WorkspaceWrite,
-        "danger-full-access" => PermissionMode::DangerFullAccess,
-        other => panic!("unsupported permission mode label: {other}"),
+        "read-only" => Ok(PermissionMode::ReadOnly),
+        "workspace-write" => Ok(PermissionMode::WorkspaceWrite),
+        "danger-full-access" => Ok(PermissionMode::DangerFullAccess),
+        other => Err(format!(
+            "unsupported permission mode '{other}'. Use read-only, workspace-write, or danger-full-access."
+        )),
     }
 }
 
@@ -434,7 +436,7 @@ pub(super) fn default_permission_mode() -> PermissionMode {
         .ok()
         .as_deref()
         .and_then(normalize_permission_mode)
-        .map(permission_mode_from_label)
+        .and_then(|m| permission_mode_from_label(m).ok())
         .or_else(config_permission_mode_for_current_dir)
         .unwrap_or(PermissionMode::WorkspaceWrite)
 }
@@ -458,7 +460,7 @@ pub(super) fn filter_tool_specs(
 
 fn parse_system_prompt_args(args: &[String]) -> Result<CliAction, String> {
     let mut cwd = env::current_dir().map_err(|error| error.to_string())?;
-    let mut date = DEFAULT_DATE.to_string();
+    let mut date = current_date();
     let mut index = 0;
 
     while index < args.len() {

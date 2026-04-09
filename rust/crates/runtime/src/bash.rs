@@ -67,7 +67,9 @@ pub struct BashCommandOutput {
 }
 
 /// Executes a shell command with the requested sandbox settings.
+#[tracing::instrument(skip_all, fields(command_len = input.command.len(), background = input.run_in_background.unwrap_or(false)))]
 pub fn execute_bash(input: BashCommandInput) -> io::Result<BashCommandOutput> {
+    tracing::info!("executing bash command");
     let cwd = env::current_dir()?;
     let sandbox_status = sandbox_status_for_input(&input, &cwd);
 

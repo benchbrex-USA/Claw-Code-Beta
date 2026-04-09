@@ -39,11 +39,13 @@ fn global_worker_registry() -> &'static WorkerRegistry {
     REGISTRY.get_or_init(WorkerRegistry::new)
 }
 
+#[tracing::instrument(skip_all, fields(tool = name))]
 pub(crate) fn execute_tool_with_enforcer(
     enforcer: Option<&PermissionEnforcer>,
     name: &str,
     input: &Value,
 ) -> Result<String, String> {
+    tracing::debug!("dispatching tool");
     if mvp_tool_specs().iter().any(|spec| spec.name == name) {
         maybe_enforce_permission_check(enforcer, name, input)?;
     }

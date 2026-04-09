@@ -1,6 +1,9 @@
 use crate::error::ApiError;
 use crate::types::StreamEvent;
 
+/// Maximum allowed SSE buffer size (64 MB).
+const MAX_BUFFER_SIZE: usize = 64 * 1024 * 1024;
+
 #[derive(Debug, Default)]
 pub struct SseParser {
     buffer: Vec<u8>,
@@ -13,6 +16,12 @@ impl SseParser {
     }
 
     pub fn push(&mut self, chunk: &[u8]) -> Result<Vec<StreamEvent>, ApiError> {
+        let new_len = self.buffer.len().saturating_add(chunk.len());
+        if new_len > MAX_BUFFER_SIZE {
+            return Err(ApiError::InvalidSseFrame(
+                "SSE buffer exceeded maximum allowed size (64 MB)",
+            ));
+        }
         self.buffer.extend_from_slice(chunk);
         let mut events = Vec::new();
 
@@ -275,5 +284,19 @@ mod tests {
                 }
             ))
         );
+    }
+
+    #[test]
+    fn rejects_oversized_buffer() {
+        let mut parser = SseParser::new();
+        // Push data that exceeds MAX_BUFFER_SIZE (64 MB)
+        let chunk = vec![b'x'; 32 * 1024 * 1024]; // 32 MB
+        assert!(parser.push(&chunk).is_ok());
+        assert!(parser.push(&chunk).is_ok()); // 64 MB total, still ok (at limit)
+        // One more byte should fail
+        let result = parser.push(b"y");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("64 MB"));
     }
 }
