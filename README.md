@@ -19,6 +19,16 @@
 
 ---
 
+<p align="center">
+  <img src="assets/terminal-demo.svg" alt="Claw Code terminal demo — agentic coding session" width="780" />
+</p>
+
+<p align="center">
+  <em>Claw Code reads your codebase, runs tools, executes tests, and reports findings — all within a secure, permission-aware runtime.</em>
+</p>
+
+---
+
 ## Overview
 
 Claw Code is a production-grade CLI harness that brings agentic AI assistance directly into your development workflow. It connects to leading AI providers, executes tools on your behalf with fine-grained permission controls, and persists session state across interactions — all within a secure, auditable runtime.
@@ -115,6 +125,10 @@ User Input → REPL/CLI → ConversationRuntime → API Client (streaming)
 ```
 
 ## Security Model
+
+<p align="center">
+  <img src="assets/permissions-demo.svg" alt="Claw Code permission enforcement demo" width="780" />
+</p>
 
 Claw Code follows a **fail-closed** security posture. Unknown tools, unsupported permission labels, missing handlers, and unsafe path resolution default to denial.
 

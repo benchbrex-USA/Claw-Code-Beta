@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="540" font-family="'SF Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, monospace" font-size="13">
+  <defs>
+    <style>
+      .bg { fill: #1a1b26; }
+      .titlebar { fill: #24283b; }
+      .btn-close { fill: #f7768e; }
+      .btn-min { fill: #e0af68; }
+      .btn-max { fill: #9ece6a; }
+      .prompt { fill: #7aa2f7; }
+      .command { fill: #c0caf5; }
+      .comment { fill: #565f89; }
+      .success { fill: #9ece6a; }
+      .info { fill: #7dcfff; }
+      .warn { fill: #e0af68; }
+      .text { fill: #a9b1d6; }
+      .dim { fill: #565f89; }
+      .bold { fill: #c0caf5; font-weight: bold; }
+      .accent { fill: #bb9af7; }
+    </style>
+  </defs>
+
+  <!-- Window -->
+  <rect class="bg" width="820" height="540" rx="10"/>
+  <rect class="titlebar" width="820" height="36" rx="10"/>
+  <rect class="titlebar" y="10" width="820" height="26"/>
+
+  <!-- Traffic lights -->
+  <circle class="btn-close" cx="20" cy="18" r="6"/>
+  <circle class="btn-min" cx="40" cy="18" r="6"/>
+  <circle class="btn-max" cx="60" cy="18" r="6"/>
+
+  <!-- Title -->
+  <text x="410" y="23" text-anchor="middle" class="dim" font-size="12">claw v0.1.0 — ~/my-project</text>
+
+  <!-- Line 1: prompt -->
+  <text x="16" y="64" class="prompt">$</text>
+  <text x="30" y="64" class="command"> claw</text>
+
+  <!-- Line 2: welcome -->
+  <text x="16" y="88" class="accent">  Claw Code</text>
+  <text x="105" y="88" class="dim"> v0.1.0</text>
+
+  <!-- Line 3: model info -->
+  <text x="16" y="108" class="dim">  Model: claude-opus-4-6  |  Mode: workspace-write  |  Session: a7f3c2</text>
+
+  <!-- Line 4: blank -->
+  <!-- Line 5: user input -->
+  <text x="16" y="140" class="prompt">  &gt;</text>
+  <text x="36" y="140" class="command"> summarize this repository and find any bugs</text>
+
+  <!-- Line 6: thinking -->
+  <text x="16" y="168" class="dim">  Thinking...</text>
+
+  <!-- Line 7: tool use -->
+  <text x="16" y="196" class="info">  [read_file]</text>
+  <text x="110" y="196" class="text"> src/main.rs</text>
+  <text x="210" y="196" class="dim">(247 lines)</text>
+
+  <!-- Line 8: tool use -->
+  <text x="16" y="218" class="info">  [glob_search]</text>
+  <text x="125" y="218" class="text"> **/*.rs</text>
+  <text x="195" y="218" class="dim">(34 files)</text>
+
+  <!-- Line 9: tool use -->
+  <text x="16" y="240" class="info">  [grep_search]</text>
+  <text x="125" y="240" class="text"> unwrap()</text>
+  <text x="210" y="240" class="dim">(12 matches)</text>
+
+  <!-- Line 10: tool use -->
+  <text x="16" y="262" class="info">  [bash]</text>
+  <text x="70" y="262" class="text"> cargo test --workspace</text>
+  <text x="275" y="262" class="success">704 passed</text>
+
+  <!-- Line 11: blank -->
+  <!-- Line 12: response header -->
+  <text x="16" y="294" class="bold">  Repository Summary</text>
+
+  <!-- Line 13-16: response -->
+  <text x="16" y="316" class="text">  This is a Rust workspace with 8 crates implementing an agentic</text>
+  <text x="16" y="336" class="text">  coding CLI. The architecture follows a clean separation of concerns:</text>
+  <text x="16" y="356" class="text">  API client, runtime engine, tool dispatch, and plugin lifecycle.</text>
+
+  <!-- Line 17: blank -->
+  <!-- Line 18: findings -->
+  <text x="16" y="384" class="bold">  Findings</text>
+  <text x="16" y="406" class="success">  [ok]</text>
+  <text x="52" y="406" class="text"> All 704 tests passing, zero clippy warnings</text>
+  <text x="16" y="426" class="warn">  [warn]</text>
+  <text x="60" y="426" class="text"> 12 unwrap() calls in non-test code — consider error handling</text>
+  <text x="16" y="446" class="success">  [ok]</text>
+  <text x="52" y="446" class="text"> No unsafe code (workspace-level forbid)</text>
+
+  <!-- Line 19: blank -->
+  <!-- Line 20: cost -->
+  <text x="16" y="476" class="dim">  ─────────────────────────────────────────────────────────────</text>
+  <text x="16" y="496" class="dim">  Tokens: 24,531 in / 1,847 out</text>
+  <text x="280" y="496" class="dim">Cost: $0.0892</text>
+  <text x="410" y="496" class="dim">Duration: 8.3s</text>
+
+  <!-- Cursor -->
+  <text x="16" y="524" class="prompt">  &gt;</text>
+  <rect x="36" y="513" width="8" height="16" class="prompt" opacity="0.7">
+    <animate attributeName="opacity" values="0.7;0;0.7" dur="1.2s" repeatCount="indefinite"/>
+  </rect>
+</svg>
