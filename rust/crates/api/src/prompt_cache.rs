@@ -424,7 +424,10 @@ fn ensure_cache_dirs(paths: &PromptCachePaths) -> std::io::Result<()> {
 fn write_json<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
     let json = serde_json::to_vec_pretty(value)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    fs::write(path, json)
+    // Atomic write: write to a temp file, then rename to avoid corruption on crash.
+    let temp_path = path.with_extension("tmp");
+    fs::write(&temp_path, json)?;
+    fs::rename(&temp_path, path)
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Option<T> {

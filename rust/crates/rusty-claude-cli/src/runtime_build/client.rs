@@ -197,6 +197,7 @@ impl ApiClient for AnthropicRuntimeClient {
                 && events.iter().any(|event| {
                     matches!(event, AssistantEvent::TextDelta(text) if !text.is_empty())
                         || matches!(event, AssistantEvent::ToolUse { .. })
+                        || matches!(event, AssistantEvent::Usage(_))
                 })
             {
                 events.push(AssistantEvent::MessageStop);
@@ -209,16 +210,24 @@ impl ApiClient for AnthropicRuntimeClient {
                 return Ok(events);
             }
 
-            let response = self
-                .client
-                .send_message(&MessageRequest {
-                    stream: false,
-                    ..message_request.clone()
-                })
-                .await
-                .map_err(|error| RuntimeError::new(error.to_string()))?;
-            let mut events = response_to_events(response, out)?;
-            push_prompt_cache_record(&self.client, &mut events);
+            // Only fall back to non-streaming if we truly got no usable events.
+            // This avoids sending the conversation twice (duplicate charges/tool calls).
+            if events.is_empty() {
+                let response = self
+                    .client
+                    .send_message(&MessageRequest {
+                        stream: false,
+                        ..message_request.clone()
+                    })
+                    .await
+                    .map_err(|error| RuntimeError::new(error.to_string()))?;
+                let mut events = response_to_events(response, out)?;
+                push_prompt_cache_record(&self.client, &mut events);
+                return Ok(events);
+            }
+
+            // Had some events but no MessageStop — add one and return.
+            events.push(AssistantEvent::MessageStop);
             Ok(events)
         })
     }

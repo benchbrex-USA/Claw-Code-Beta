@@ -51,7 +51,14 @@ pub(super) fn run_login() -> Result<(), Box<dyn std::error::Error>> {
     let returned_state = callback.state.ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidData, "callback did not include state")
     })?;
-    if returned_state != state {
+    // Use constant-time comparison for the CSRF state token to prevent timing attacks.
+    if returned_state.len() != state.len()
+        || returned_state
+            .bytes()
+            .zip(state.bytes())
+            .fold(0_u8, |acc, (a, b)| acc | (a ^ b))
+            != 0
+    {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "oauth state mismatch").into());
     }
 
@@ -101,7 +108,28 @@ fn wait_for_oauth_callback(
     port: u16,
 ) -> Result<runtime::OAuthCallbackParams, Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(("127.0.0.1", port))?;
-    let (mut stream, _) = listener.accept()?;
+    // Set a timeout so the CLI doesn't hang indefinitely if the browser never redirects.
+    listener.set_nonblocking(false)?;
+    let timeout = std::time::Duration::from_secs(120);
+    let start = std::time::Instant::now();
+    listener
+        .set_nonblocking(true)
+        .ok();
+    let (mut stream, _) = loop {
+        match listener.accept() {
+            Ok(conn) => break conn,
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                if start.elapsed() > timeout {
+                    return Err(Box::new(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "OAuth callback timed out after 120 seconds",
+                    )));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => return Err(Box::new(e)),
+        }
+    };
     let mut buffer = [0_u8; 4096];
     let bytes_read = stream.read(&mut buffer)?;
     let request = String::from_utf8_lossy(&buffer[..bytes_read]);

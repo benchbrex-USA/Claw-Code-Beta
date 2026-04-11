@@ -65,7 +65,7 @@ pub(crate) fn execute_tool_with_enforcer(
         "ToolSearch" => from_value::<ToolSearchInput>(input).and_then(run_tool_search),
         "NotebookEdit" => from_value::<NotebookEditInput>(input).and_then(run_notebook_edit),
         "Sleep" => from_value::<SleepInput>(input).and_then(run_sleep),
-        "SendUserMessage" | "Brief" => from_value::<BriefInput>(input).and_then(run_brief),
+        "SendUserMessage" => from_value::<BriefInput>(input).and_then(run_brief),
         "Config" => from_value::<ConfigInput>(input).and_then(run_config),
         "EnterPlanMode" => from_value::<EnterPlanModeInput>(input).and_then(run_enter_plan_mode),
         "ExitPlanMode" => from_value::<ExitPlanModeInput>(input).and_then(run_exit_plan_mode),
@@ -109,9 +109,6 @@ pub(crate) fn execute_tool_with_enforcer(
         "McpAuth" => from_value::<McpAuthInput>(input).and_then(run_mcp_auth),
         "RemoteTrigger" => from_value::<RemoteTriggerInput>(input).and_then(run_remote_trigger),
         "MCP" => from_value::<McpToolInput>(input).and_then(run_mcp_tool),
-        "TestingPermission" => {
-            from_value::<TestingPermissionInput>(input).and_then(run_testing_permission)
-        }
         _ => Err(format!("unsupported tool: {name}")),
     }
 }
@@ -246,9 +243,10 @@ fn run_task_list(_input: Value) -> Result<String, String> {
             })
         })
         .collect();
+    let count = tasks.len();
     to_pretty_json(json!({
         "tasks": tasks,
-        "count": tasks.len()
+        "count": count
     }))
 }
 
@@ -425,9 +423,10 @@ fn run_cron_list(_input: Value) -> Result<String, String> {
             })
         })
         .collect();
+    let count = entries.len();
     to_pretty_json(json!({
         "crons": entries,
-        "count": entries.len()
+        "count": count
     }))
 }
 
@@ -605,14 +604,6 @@ fn run_mcp_tool(input: McpToolInput) -> Result<String, String> {
     }
 }
 
-#[allow(clippy::needless_pass_by_value)]
-fn run_testing_permission(input: TestingPermissionInput) -> Result<String, String> {
-    to_pretty_json(json!({
-        "action": input.action,
-        "permitted": true,
-        "message": "Testing permission tool stub"
-    }))
-}
 fn from_value<T: for<'de> Deserialize<'de>>(input: &Value) -> Result<T, String> {
     serde_json::from_value(input.clone()).map_err(|error| error.to_string())
 }

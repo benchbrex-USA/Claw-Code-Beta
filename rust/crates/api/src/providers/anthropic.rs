@@ -32,10 +32,10 @@ fn build_http_client() -> reqwest::Client {
         .connect_timeout(HTTP_CONNECT_TIMEOUT)
         .pool_idle_timeout(HTTP_POOL_IDLE_TIMEOUT)
         .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
+        .expect("failed to build HTTP client — TLS initialization error")
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum AuthSource {
     None,
     ApiKey(String),
@@ -44,6 +44,19 @@ pub enum AuthSource {
         api_key: String,
         bearer_token: String,
     },
+}
+
+impl std::fmt::Debug for AuthSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => f.write_str("AuthSource::None"),
+            Self::ApiKey(_) => f.write_str("AuthSource::ApiKey([REDACTED])"),
+            Self::BearerToken(_) => f.write_str("AuthSource::BearerToken([REDACTED])"),
+            Self::ApiKeyAndBearer { .. } => {
+                f.write_str("AuthSource::ApiKeyAndBearer([REDACTED])")
+            }
+        }
+    }
 }
 
 impl AuthSource {
@@ -462,9 +475,15 @@ impl AnthropicClient {
             tokio::time::sleep(self.backoff_for_attempt(attempts)?).await;
         }
 
-        Err(ApiError::RetriesExhausted {
-            attempts,
-            last_error: Box::new(last_error.expect("retry loop must capture an error")),
+        Err(match last_error {
+            Some(error) => ApiError::RetriesExhausted {
+                attempts,
+                last_error: Box::new(error),
+            },
+            None => ApiError::RetriesExhausted {
+                attempts,
+                last_error: Box::new(ApiError::InvalidSseFrame("retry loop exited with no error captured")),
+            },
         })
     }
 
@@ -657,11 +676,25 @@ fn resolve_saved_oauth_token_set(
 
 fn client_runtime_block_on<F, T>(future: F) -> Result<T, ApiError>
 where
-    F: std::future::Future<Output = Result<T, ApiError>>,
+    F: std::future::Future<Output = Result<T, ApiError>> + Send,
+    T: Send,
 {
-    tokio::runtime::Runtime::new()
-        .map_err(ApiError::from)?
-        .block_on(future)
+    // If we're already inside a tokio runtime, use spawn_blocking + block_in_place
+    // to avoid the "Cannot start a runtime from within a runtime" panic.
+    if tokio::runtime::Handle::try_current().is_ok() {
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let rt = tokio::runtime::Runtime::new().map_err(ApiError::from)?;
+                rt.block_on(future)
+            })
+            .join()
+            .unwrap_or_else(|_| Err(ApiError::InvalidSseFrame("runtime thread panicked")))
+        })
+    } else {
+        tokio::runtime::Runtime::new()
+            .map_err(ApiError::from)?
+            .block_on(future)
+    }
 }
 
 fn load_saved_oauth_token() -> Result<Option<OAuthTokenSet>, ApiError> {

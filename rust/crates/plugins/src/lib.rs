@@ -367,7 +367,7 @@ impl PluginTool {
 }
 
 fn default_tool_permission_label() -> String {
-    "danger-full-access".to_string()
+    "read-only".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -850,15 +850,24 @@ impl PluginRegistry {
     }
 
     pub fn shutdown(&self) -> Result<(), PluginError> {
+        let mut first_error: Option<PluginError> = None;
         for plugin in self
             .plugins
             .iter()
             .rev()
             .filter(|plugin| plugin.is_enabled())
         {
-            plugin.shutdown()?;
+            if let Err(e) = plugin.shutdown() {
+                tracing::warn!(plugin = %plugin.metadata().name, "plugin shutdown failed: {e}");
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
+            }
         }
-        Ok(())
+        match first_error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 }
 
@@ -941,6 +950,10 @@ pub enum PluginManifestValidationError {
         tool_name: String,
         permission: String,
     },
+    ShellMetacharacters {
+        kind: &'static str,
+        command: String,
+    },
 }
 
 impl Display for PluginManifestValidationError {
@@ -985,6 +998,10 @@ impl Display for PluginManifestValidationError {
             } => write!(
                 f,
                 "plugin tool `{tool_name}` requiredPermission `{permission}` must be read-only, workspace-write, or danger-full-access"
+            ),
+            Self::ShellMetacharacters { kind, command } => write!(
+                f,
+                "{kind} command `{command}` contains shell metacharacters which are not allowed"
             ),
         }
     }
@@ -1831,6 +1848,7 @@ fn build_manifest_commands(
                 field: "description",
                 name: Some(name.clone()),
             });
+            continue;
         }
         if command.command.trim().is_empty() {
             errors.push(PluginManifestValidationError::EmptyEntryField {
@@ -1838,9 +1856,9 @@ fn build_manifest_commands(
                 field: "command",
                 name: Some(name.clone()),
             });
-        } else {
-            validate_command_entry(root, &command.command, "command", errors);
+            continue;
         }
+        validate_command_entry(root, &command.command, "command", errors);
         validated.push(command);
     }
 
@@ -1873,6 +1891,12 @@ fn validate_command_entry(
         return;
     }
     if is_literal_command(entry) {
+        if has_shell_metacharacters(entry) {
+            errors.push(PluginManifestValidationError::ShellMetacharacters {
+                kind,
+                command: entry.to_string(),
+            });
+        }
         return;
     }
 
@@ -2023,6 +2047,20 @@ fn is_literal_command(entry: &str) -> bool {
     !entry.starts_with("./") && !entry.starts_with("../") && !Path::new(entry).is_absolute()
 }
 
+fn has_shell_metacharacters(command: &str) -> bool {
+    command.contains(';')
+        || command.contains('&')
+        || command.contains('|')
+        || command.contains('$')
+        || command.contains('`')
+        || command.contains('(')
+        || command.contains(')')
+        || command.contains('{')
+        || command.contains('}')
+        || command.contains('<')
+        || command.contains('>')
+}
+
 fn run_lifecycle_commands(
     metadata: &PluginMetadata,
     lifecycle: &PluginLifecycle,
@@ -2050,9 +2088,10 @@ fn run_lifecycle_commands(
             process
         } else {
             let mut process = Command::new("sh");
-            process.arg("-lc").arg(command);
+            process.arg("-c").arg(command);
             process
         };
+        process.stdin(std::process::Stdio::null());
         if let Some(root) = &metadata.root {
             process.current_dir(root);
         }
@@ -2175,7 +2214,7 @@ fn describe_install_source(source: &PluginInstallSource) -> String {
 fn unix_time_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("time should be after epoch")
+        .unwrap_or_default()
         .as_millis()
 }
 

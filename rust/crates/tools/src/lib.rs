@@ -382,10 +382,6 @@ struct McpToolInput {
     arguments: Option<Value>,
 }
 
-#[derive(Debug, Deserialize)]
-struct TestingPermissionInput {
-    action: String,
-}
 
 #[derive(Debug, Serialize)]
 struct WebFetchOutput {

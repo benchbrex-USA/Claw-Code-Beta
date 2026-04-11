@@ -27,7 +27,7 @@ fn build_http_client() -> reqwest::Client {
         .connect_timeout(HTTP_CONNECT_TIMEOUT)
         .pool_idle_timeout(HTTP_POOL_IDLE_TIMEOUT)
         .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
+        .expect("failed to build HTTP client — TLS initialization error")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -278,6 +278,13 @@ impl OpenAiSseParser {
     }
 
     fn push(&mut self, chunk: &[u8]) -> Result<Vec<ChatCompletionChunk>, ApiError> {
+        const MAX_BUFFER_SIZE: usize = 64 * 1024 * 1024; // 64 MB
+        let new_len = self.buffer.len().saturating_add(chunk.len());
+        if new_len > MAX_BUFFER_SIZE {
+            return Err(ApiError::InvalidSseFrame(
+                "OpenAI SSE buffer exceeded maximum size",
+            ));
+        }
         self.buffer.extend_from_slice(chunk);
         let mut events = Vec::new();
 
@@ -756,13 +763,13 @@ fn normalize_response(
     model: &str,
     response: ChatCompletionResponse,
 ) -> Result<MessageResponse, ApiError> {
-    let choice = response
-        .choices
-        .into_iter()
-        .next()
-        .ok_or(ApiError::InvalidSseFrame(
-            "chat completion response missing choices",
-        ))?;
+    let choice = response.choices.into_iter().next().ok_or(ApiError::Api {
+        status: reqwest::StatusCode::OK,
+        error_type: Some("malformed_response".to_string()),
+        message: Some("chat completion response missing choices".to_string()),
+        body: String::new(),
+        retryable: false,
+    })?;
     let mut content = Vec::new();
     if let Some(text) = choice.message.content.filter(|value| !value.is_empty()) {
         content.push(OutputContentBlock::Text { text });
@@ -806,15 +813,17 @@ fn parse_tool_arguments(arguments: &str) -> Value {
 }
 
 fn next_sse_frame(buffer: &mut Vec<u8>) -> Option<String> {
+    // Check \r\n\r\n before \n\n to avoid matching the embedded \n\n
+    // inside a \r\n\r\n sequence and cutting the frame boundary early.
     let separator = buffer
-        .windows(2)
-        .position(|window| window == b"\n\n")
-        .map(|position| (position, 2))
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|position| (position, 4))
         .or_else(|| {
             buffer
-                .windows(4)
-                .position(|window| window == b"\r\n\r\n")
-                .map(|position| (position, 4))
+                .windows(2)
+                .position(|window| window == b"\n\n")
+                .map(|position| (position, 2))
         })?;
 
     let (position, separator_len) = separator;

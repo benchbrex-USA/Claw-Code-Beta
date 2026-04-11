@@ -647,7 +647,9 @@ fn resolve_skill_path(skill: &str) -> Result<std::path::PathBuf, String> {
 }
 
 const DEFAULT_AGENT_MODEL: &str = "claude-opus-4-6";
-const DEFAULT_AGENT_SYSTEM_DATE: &str = "2026-03-31";
+fn default_agent_system_date() -> String {
+    iso8601_now().split('T').next().unwrap_or("2026-04-11").to_string()
+}
 const DEFAULT_AGENT_MAX_ITERATIONS: usize = 32;
 
 pub(super) fn execute_agent(input: AgentInput) -> Result<AgentOutput, String> {
@@ -798,7 +800,7 @@ fn build_agent_system_prompt(subagent_type: &str) -> Result<Vec<String>, String>
     let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
     let mut prompt = load_system_prompt(
         cwd,
-        DEFAULT_AGENT_SYSTEM_DATE.to_string(),
+        default_agent_system_date(),
         std::env::consts::OS,
         "unknown",
     )
@@ -1460,9 +1462,6 @@ fn agent_store_dir() -> Result<std::path::PathBuf, String> {
         return Ok(std::path::PathBuf::from(path));
     }
     let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
-    if let Some(workspace_root) = cwd.ancestors().nth(2) {
-        return Ok(workspace_root.join(".clawd-agents"));
-    }
     Ok(cwd.join(".clawd-agents"))
 }
 
@@ -1511,9 +1510,31 @@ fn normalize_subagent_type(subagent_type: Option<&str>) -> String {
 }
 
 pub(super) fn iso8601_now() -> String {
-    std::time::SystemTime::now()
+    let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs()
-        .to_string()
+        .as_secs();
+    // Format as ISO 8601 UTC: 2026-04-11T12:34:56Z
+    let sec = secs % 60;
+    let min = (secs / 60) % 60;
+    let hour = (secs / 3600) % 24;
+    let days = secs / 86400;
+    let (year, month, day) = epoch_days_to_ymd(days);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}Z")
+}
+
+#[allow(clippy::many_single_char_names)]
+fn epoch_days_to_ymd(days: u64) -> (u64, u64, u64) {
+    // Algorithm from Howard Hinnant's date library (public domain).
+    let z = days + 719_468;
+    let era = z / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { year + 1 } else { year };
+    (year, month, day)
 }

@@ -47,16 +47,18 @@ impl SseParser {
     }
 
     fn next_frame(&mut self) -> Option<String> {
+        // Check \r\n\r\n before \n\n to avoid matching the embedded \n\n
+        // inside a \r\n\r\n sequence and cutting the frame boundary early.
         let separator = self
             .buffer
-            .windows(2)
-            .position(|window| window == b"\n\n")
-            .map(|position| (position, 2))
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .map(|position| (position, 4))
             .or_else(|| {
                 self.buffer
-                    .windows(4)
-                    .position(|window| window == b"\r\n\r\n")
-                    .map(|position| (position, 4))
+                    .windows(2)
+                    .position(|window| window == b"\n\n")
+                    .map(|position| (position, 2))
             })?;
 
         let (position, separator_len) = separator;

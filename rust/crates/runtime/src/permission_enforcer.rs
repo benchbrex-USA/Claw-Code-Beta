@@ -250,7 +250,6 @@ fn is_read_only_command(command: &str) -> bool {
             | "tr"
             | "cut"
             | "paste"
-            | "tee"
             | "xargs"
             | "test"
             | "true"

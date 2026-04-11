@@ -181,11 +181,11 @@ pub fn resolve_model_alias(model: &str) -> String {
                     "grok" | "grok-3" => "grok-3",
                     "grok-mini" | "grok-3-mini" => "grok-3-mini",
                     "grok-2" => "grok-2",
-                    _ => trimmed,
+                    _ => &lower,
                 },
                 ProviderKind::OpenAi => match *alias {
                     "gpt4" => "gpt-4o",
-                    _ => trimmed,
+                    _ => &lower,
                 },
             })
         })

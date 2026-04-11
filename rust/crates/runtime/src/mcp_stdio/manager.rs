@@ -859,11 +859,14 @@ impl McpServerManager {
         &mut self,
         server_name: &str,
     ) -> Result<(), McpServerManagerError> {
+        const MAX_SPAWN_ATTEMPTS: u32 = 3;
+
         if self.server_process_exited(server_name)? {
             self.reset_server(server_name).await?;
         }
 
         let mut attempts = 0;
+        let mut spawn_attempts: u32 = 0;
         loop {
             let needs_spawn = self
                 .servers
@@ -874,6 +877,16 @@ impl McpServerManager {
                 })?;
 
             if needs_spawn {
+                spawn_attempts += 1;
+                if spawn_attempts > MAX_SPAWN_ATTEMPTS {
+                    return Err(McpServerManagerError::InvalidResponse {
+                        server_name: server_name.to_string(),
+                        method: "spawn",
+                        details: format!(
+                            "server failed to stay alive after {MAX_SPAWN_ATTEMPTS} spawn attempts"
+                        ),
+                    });
+                }
                 let server = self.server_mut(server_name)?;
                 server.process = Some(spawn_mcp_stdio_process(&server.bootstrap)?);
                 server.initialized = false;

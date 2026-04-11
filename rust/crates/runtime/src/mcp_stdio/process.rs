@@ -90,6 +90,7 @@ impl McpStdioProcess {
     }
 
     pub async fn read_frame(&mut self) -> io::Result<Vec<u8>> {
+        const MAX_MCP_FRAME_SIZE: usize = 64 * 1024 * 1024; // 64 MB
         let mut content_length = None;
         loop {
             let mut line = String::new();
@@ -118,6 +119,14 @@ impl McpStdioProcess {
         let content_length = content_length.ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidData, "missing Content-Length header")
         })?;
+        if content_length > MAX_MCP_FRAME_SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "MCP frame Content-Length {content_length} exceeds maximum ({MAX_MCP_FRAME_SIZE})"
+                ),
+            ));
+        }
         let mut payload = vec![0_u8; content_length];
         self.stdout.read_exact(&mut payload).await?;
         Ok(payload)

@@ -292,8 +292,10 @@ fn shell_command(command: &str) -> CommandWithStdin {
         command_builder.arg(command);
         CommandWithStdin::new(command_builder)
     } else {
+        // Use -c (not -lc) to avoid sourcing the user's login profile,
+        // which adds unpredictable environment and startup latency.
         let mut command_builder = Command::new("sh");
-        command_builder.arg("-lc").arg(command);
+        command_builder.arg("-c").arg(command);
         CommandWithStdin::new(command_builder)
     };
 

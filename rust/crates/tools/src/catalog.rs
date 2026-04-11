@@ -768,18 +768,5 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
             }),
             required_permission: PermissionMode::DangerFullAccess,
         },
-        ToolSpec {
-            name: "TestingPermission",
-            description: "Test-only tool for verifying permission enforcement behavior.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "action": { "type": "string" }
-                },
-                "required": ["action"],
-                "additionalProperties": false
-            }),
-            required_permission: PermissionMode::DangerFullAccess,
-        },
     ]
 }

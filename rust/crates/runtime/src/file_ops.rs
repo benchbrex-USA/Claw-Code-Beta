@@ -68,7 +68,12 @@ fn normalize_missing_path(path: &Path) -> io::Result<PathBuf> {
             Component::RootDir => normalized.push(component.as_os_str()),
             Component::CurDir => {}
             Component::ParentDir => {
-                let _ = normalized.pop();
+                if !normalized.pop() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("path traversal escapes root: {}", path.display()),
+                    ));
+                }
             }
             Component::Normal(segment) => {
                 let candidate = normalized.join(segment);
@@ -534,7 +539,7 @@ fn collect_search_files(base_path: &Path) -> io::Result<Vec<PathBuf>> {
     }
 
     let mut files = Vec::new();
-    for entry in WalkDir::new(base_path) {
+    for entry in WalkDir::new(base_path).follow_links(false) {
         let entry = entry.map_err(|error| io::Error::other(error.to_string()))?;
         if entry.file_type().is_file() {
             files.push(entry.path().to_path_buf());
@@ -697,7 +702,16 @@ pub fn glob_search_in_workspace(
     validate_workspace_boundary(&base_dir, &canonical_root)?;
     let pattern_root = boundary_checked_glob_root(pattern, &base_dir)?;
     validate_workspace_boundary(&pattern_root, &canonical_root)?;
-    glob_search_in_dir(pattern, &base_dir)
+    // Filter results to ensure glob expansion stays within the workspace.
+    let mut output = glob_search_in_dir(pattern, &base_dir)?;
+    output.filenames.retain(|path| {
+        Path::new(path)
+            .canonicalize()
+            .map(|resolved| resolved.starts_with(&canonical_root))
+            .unwrap_or(false)
+    });
+    output.num_files = output.filenames.len();
+    Ok(output)
 }
 
 /// Run grep search without allowing the base path or glob filter to escape the workspace.

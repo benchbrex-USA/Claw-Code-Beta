@@ -358,13 +358,19 @@ pub fn validate_sed(command: &str, mode: PermissionMode) -> ValidationResult {
 /// Corresponds to upstream `tools/BashTool/pathValidation.ts`.
 #[must_use]
 pub fn validate_paths(command: &str, workspace: &Path) -> ValidationResult {
-    // Check for directory traversal attempts.
-    if command.contains("../") {
+    // Check for directory traversal attempts — match both `../` and bare `..`
+    // at end of argument or followed by whitespace.
+    if command.contains("../") || command.contains(".. ") || command.ends_with("..") {
         let workspace_str = workspace.to_string_lossy();
-        // Allow traversal if it resolves within workspace (heuristic).
-        if !command.contains(&*workspace_str) {
+        let canonical_workspace = workspace
+            .canonicalize()
+            .unwrap_or_else(|_| workspace.to_path_buf());
+        let canonical_str = canonical_workspace.to_string_lossy();
+        // Allow traversal only if the workspace canonical path appears in the command,
+        // suggesting the resolved result stays in the workspace.
+        if !command.contains(&*workspace_str) && !command.contains(&*canonical_str) {
             return ValidationResult::Warn {
-                message: "Command contains directory traversal pattern '../' — verify the target path resolves within the workspace".to_string(),
+                message: "Command contains directory traversal pattern '..' — verify the target path resolves within the workspace".to_string(),
             };
         }
     }
@@ -662,10 +668,21 @@ fn extract_sudo_inner(command: &str) -> &str {
         Some(idx) => {
             // Skip flags after sudo.
             let rest = &parts[idx + 1..];
+            // Track byte offset by walking past the parts before the inner command.
+            let after_sudo = parts[..=idx]
+                .iter()
+                .fold(0_usize, |pos, token| {
+                    command[pos..]
+                        .find(token)
+                        .map_or(pos, |offset| pos + offset + token.len())
+                });
             for &part in rest {
                 if !part.starts_with('-') {
-                    // Found the inner command — return from here to end.
-                    let offset = command.find(part).unwrap_or(0);
+                    // Find this part starting from after the sudo token, not from the
+                    // beginning of the string, to avoid matching earlier occurrences.
+                    let offset = command[after_sudo..]
+                        .find(part)
+                        .map_or(0, |off| after_sudo + off);
                     return &command[offset..];
                 }
             }

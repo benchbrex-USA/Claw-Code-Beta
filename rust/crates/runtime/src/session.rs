@@ -413,15 +413,18 @@ impl Session {
             return Ok(());
         };
 
-        let needs_bootstrap = !path.exists() || fs::metadata(path)?.len() == 0;
-        if needs_bootstrap {
-            self.save_to_path(path)?;
-            return Ok(());
+        // Use a single OpenOptions call to avoid TOCTOU between exists/metadata checks
+        // and the subsequent open. If the file doesn't exist or is empty, bootstrap it.
+        match OpenOptions::new().append(true).open(path) {
+            Ok(mut file) if file.metadata().map(|m| m.len()).unwrap_or(0) > 0 => {
+                writeln!(file, "{}", message_record(message).render())?;
+                Ok(())
+            }
+            _ => {
+                self.save_to_path(path)?;
+                Ok(())
+            }
         }
-
-        let mut file = OpenOptions::new().append(true).open(path)?;
-        writeln!(file, "{}", message_record(message).render())?;
-        Ok(())
     }
 
     fn meta_record(&self) -> Result<JsonValue, SessionError> {

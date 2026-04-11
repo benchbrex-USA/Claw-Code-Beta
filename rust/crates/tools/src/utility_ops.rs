@@ -743,7 +743,9 @@ fn get_nested_value<'a>(
 }
 
 fn set_nested_value(root: &mut serde_json::Map<String, Value>, path: &[&str], new_value: Value) {
-    let (first, rest) = path.split_first().expect("config path must not be empty");
+    let Some((first, rest)) = path.split_first() else {
+        return;
+    };
     if rest.is_empty() {
         root.insert((*first).to_string(), new_value);
         return;
@@ -755,7 +757,9 @@ fn set_nested_value(root: &mut serde_json::Map<String, Value>, path: &[&str], ne
     if !entry.is_object() {
         *entry = Value::Object(serde_json::Map::new());
     }
-    let map = entry.as_object_mut().expect("object inserted");
+    let Some(map) = entry.as_object_mut() else {
+        return;
+    };
     set_nested_value(map, rest, new_value);
 }
 
@@ -1049,6 +1053,10 @@ fn format_notebook_edit_mode(mode: NotebookEditMode) -> String {
     }
 }
 
-fn make_cell_id(index: usize) -> String {
-    format!("cell-{}", index + 1)
+fn make_cell_id(_index: usize) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("cell-{nanos:x}")
 }
